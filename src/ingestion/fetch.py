@@ -80,6 +80,28 @@ def _convert_dataframe_types(df):
     return df
 
 
+def _add_missing_schema_columns(df):
+    """Add missing columns from schema as NA values.
+    
+    Args:
+        df (pd.DataFrame): The DataFrame to add missing columns to.
+    
+    Returns:
+        pd.DataFrame: DataFrame with all schema columns present.
+    """
+    for col in SCHEMA.names:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df
+
+
+def _process_dataframe(df):
+    """Process the DataFrame to match the schema."""
+    df = _convert_dataframe_types(df)
+    df = _add_missing_schema_columns(df)
+    return df
+
+
 def _fetch_data_for_month(year: int, month: int, save: bool = True):
     """Fetch and save 311 service request data for a specific month.
     
@@ -120,7 +142,7 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
         df = pd.DataFrame.from_records(results)
         
         # Convert types to match schema
-        df = _convert_dataframe_types(df)
+        df = _process_dataframe(df)
         
         if save:
             # Write to year/month partition
