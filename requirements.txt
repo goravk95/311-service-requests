@@ -10,3 +10,6 @@ fastparquet==2024.11.0
 polars==1.33.1
 plotly==6.3.0
 nbformat==5.10.4
+scikit_learn==1.7.2
+lightgbm==4.6.0
+h3==4.3.1
