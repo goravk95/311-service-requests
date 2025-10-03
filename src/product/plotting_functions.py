@@ -12,7 +12,7 @@ import numpy as np
 
 
 def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geographic Density Map", 
-                             gridsize=90, cmap="magma", figsize=(12, 12)):
+                             gridsize=90, cmap="Reds", figsize=(12, 12)):
     """
     Create a hexbin density map for geographic data with NYC borough context.
     
@@ -135,7 +135,7 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
             r["borough"],
             xy=(r["centroid"].x, r["centroid"].y),
             ha="center", va="center",
-            fontsize=10, fontweight="bold",
+            fontsize=8, fontweight="bold",
             bbox=dict(boxstyle="round,pad=0.2", fc="lightblue", ec="none", alpha=0.6)
         )
 
