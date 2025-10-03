@@ -147,7 +147,6 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
         if save:
             # Write to year/month partition
             file_path = os.path.join(OUTPUT_DIR, f"year={year}/month={month:02d}/part-0000.parquet")
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
             df.to_parquet(file_path, index=False, schema=SCHEMA)
             print(f"Saved {file_path} ({len(df):,} rows)")
         else:

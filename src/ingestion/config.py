@@ -21,6 +21,7 @@ API_KEY_SECRET = os.getenv("SOCRATA_API_KEY_SECRET")
 DATA_START_YEAR = 2010
 DATA_END_YEAR = 2026
 OUTPUT_DIR = os.path.abspath(os.path.join(os.getcwd(), "..", "data", "landing", "311-service-requests"))
+OUTPUT_DIR = 's3://hbc-technical-assessment-gk/landing/311-service-requests'
 
 # Performance Settings
 MAX_CONCURRENT_REQUESTS = 20
