@@ -88,7 +88,7 @@ persistent=yes
 
 # Minimum Python version to use for version dependent checks. Will default to
 # the version used to run pylint.
-py-version=3.10
+py-version=3.12
 
 # Discover python modules and packages in the file system subtree.
 recursive=no
@@ -557,7 +557,7 @@ contextmanager-decorators=contextlib.contextmanager
 # List of members which are set dynamically and missed by pylint inference
 # system, and so shouldn't trigger E1101 when accessed. Python regular
 # expressions are accepted.
-generated-members=pandas.*, numpy.*
+generated-members=pandas.*, numpy.*, asyncio.*
 
 # Tells whether to warn about missing members when the owner of the attribute
 # is inferred to be None.
