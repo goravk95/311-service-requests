@@ -21,7 +21,7 @@ from .config import (
     API_KEY_SECRET,
     DATASET_ID,
     DATE_COLUMN,
-    OUTPUT_DIR,
+    S3_OUTPUT_DIR,
     DATA_START_YEAR,
     DATA_END_YEAR,
     MAX_CONCURRENT_REQUESTS,
@@ -146,7 +146,7 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
         
         if save:
             # Write to year/month partition
-            file_path = os.path.join(OUTPUT_DIR, f"year={year}/month={month:02d}/part-0000.parquet")
+            file_path = os.path.join(S3_OUTPUT_DIR, f"year={year}/month={month:02d}/part-0000.parquet")
             df.to_parquet(file_path, index=False, schema=SCHEMA)
             print(f"Saved {file_path} ({len(df):,} rows)")
         else:
