@@ -13,6 +13,8 @@ import gc
 from datetime import datetime
 import pandas as pd
 from sodapy import Socrata
+import censusdata
+import geopandas as gpd
 
 from .config import (
     API_ENDPOINT,
@@ -22,6 +24,7 @@ from .config import (
     DATASET_ID,
     DATE_COLUMN,
     S3_OUTPUT_DIR,
+    LOCAL_OUTPUT_DIR,
     DATA_START_YEAR,
     DATA_END_YEAR,
     MAX_CONCURRENT_REQUESTS,
@@ -171,14 +174,14 @@ async def fetch_and_save_month(year: int, month: int, sem: asyncio.Semaphore, sa
     
     Notes:
         The semaphore ensures we don't exceed MAX_CONCURRENT_REQUESTS simultaneous
-        API calls to respect rate limits and avoid overwhelming the API.
+        API calls in case of RAM limitations.
     """
     async with sem:
         # Run the synchronous worker in a thread pool
         await asyncio.to_thread(_fetch_data_for_month, year, month, save)
 
 
-async def fetch_all_data(save: bool = True):
+async def fetch_all_service_requests(save: bool = True):
     """Fetch all NYC 311 service request data across the configured date range.
     
     This function orchestrates the parallel download of data for all months
@@ -192,7 +195,7 @@ async def fetch_all_data(save: bool = True):
     
     Example:
         >>> import asyncio
-        >>> asyncio.run(fetch_all_data())
+        >>> asyncio.run(fetch_all_service_requests())
     
     Raises:
         Any exceptions from individual month fetches will propagate up.
@@ -205,7 +208,7 @@ async def fetch_all_data(save: bool = True):
     await asyncio.gather(*tasks)
 
 
-async def fetch_current_month(save: bool = True):
+async def fetch_current_month_service_requests(save: bool = True):
     """Fetch and overwrite data for the current month only.
     
     This function fetches NYC 311 service request data for the current month
@@ -223,7 +226,7 @@ async def fetch_current_month(save: bool = True):
     
     Notes:
         - The existing file for the current month (if any) will be overwritten.
-        - Only requires a single API request, so it's much faster than fetch_all_data().
+        - Only requires a single API request, so it's much faster than fetch_all_service_requests().
     """
     now = datetime.now()
     current_year = now.year
@@ -235,4 +238,160 @@ async def fetch_current_month(save: bool = True):
     print(f"Fetching current month: {current_year}-{current_month:02d}")
     await fetch_and_save_month(current_year, current_month, sem, save)
     print(f"Current month data updated successfully!")
+
+
+def fetch_acs_census_population_data(start_year: int = 2013, end_year: int = 2023, save: bool = True):
+    """Fetch ACS 5-year population data for NYC block groups.
+    
+    This function downloads American Community Survey (ACS) 5-year estimates for
+    total population (variable B01003_001E) for all block groups in NYC's five counties.
+    Block group data is only available from 2012+ in ACS 5-year estimates.
+    
+    Args:
+        start_year (int): First year to fetch data for. Defaults to 2013. Code won't work prior to 2013.
+        end_year (int): Last year to fetch data for (inclusive). Defaults to 2023. Data only available up to 2023.
+        save (bool): Whether to save the data to disk. Defaults to True.
+    
+    Returns:
+        pd.DataFrame: DataFrame with columns ['GEOID', 'population', 'year']
+    
+    Notes:
+        - NYC counties: 005 (Bronx), 047 (Kings/Brooklyn), 061 (Manhattan),
+          081 (Queens), 085 (Richmond/Staten Island)
+        - Data is saved to LOCAL_OUTPUT_DIR/acs-population/combined_population_data.csv
+    
+    Example:
+        >>> df_pop = fetch_acs_census_population_data(start_year=2013, end_year=2023)
+    """
+    # NYC county FIPS codes
+    nyc_counties_list = ["005", "047", "061", "081", "085"]  # Bronx, Kings, Manhattan, Queens, Richmond
+    
+    # ACS variable for total population
+    acs_var = ['B01003_001E']
+    
+    # Years to download
+    years = list(range(start_year, end_year + 1))
+    
+    all_data = []
+    
+    # Download data for each year and county
+    for year in years:
+        print(f"Downloading ACS 5-year data for {year}...")
+        year_data = []
+        
+        for county in nyc_counties_list:
+            try:
+                print(f"  - County {county}...")
+                data = censusdata.download(
+                    src='acs5',
+                    year=year,
+                    geo=censusdata.censusgeo([('state', '36'), ('county', county), ('block group', '*')]),
+                    var=acs_var
+                )
+                year_data.append(data)
+            except Exception as e:
+                print(f"    Error downloading county {county} for year {year}: {e}")
+                continue
+        
+        if year_data:
+            combined = pd.concat(year_data)
+            combined = combined.reset_index()
+            combined['year'] = year
+            all_data.append(combined)
+    
+    # Combine all years
+    df_pop = pd.concat(all_data, ignore_index=True)
+    
+    # Parse GEOID from censusgeo index
+    def geo_to_geoid(geo):
+        params = geo.params()  # params is a method that returns the geographic components
+        return params[0][1] + params[1][1] + params[2][1] + params[3][1]
+    
+    df_pop['GEOID'] = df_pop['index'].apply(geo_to_geoid)
+    df_pop.rename(columns={'B01003_001E': 'population'}, inplace=True)
+    df_pop = df_pop[['GEOID', 'population', 'year']]
+    
+    if save:
+        output_path = os.path.join(LOCAL_OUTPUT_DIR, "acs-population", "combined_population_data.csv")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df_pop.to_csv(output_path, index=False)
+        print(f"Saved ACS census data to {output_path}")
+    
+    return df_pop
+
+
+def fetch_noaa_weather_data(start_year: int = 2010, end_year: int = 2025, save: bool = True):
+    """Fetch NOAA NCLIMGRID daily weather data for NYC counties.
+    
+    This function downloads daily weather data (temperature and precipitation) for
+    NYC's five counties from the NOAA NCLIMGRID dataset hosted on AWS S3.
+    
+    Args:
+        start_year (int): First year to fetch data for. Defaults to 2010.
+        end_year (int): Last year to fetch data for (inclusive). Defaults to 2025.
+        save (bool): Whether to save the data to disk. Defaults to True.
+    
+    Returns:
+        pd.DataFrame: DataFrame with columns ['date', 'fips', 'tmax', 'tmin', 'tavg', 
+                      'prcp', 'year', 'month', 'day']
+    
+    Notes:
+        - NYC county FIPS: 36005 (Bronx), 36047 (Kings), 36061 (Manhattan),
+          36081 (Queens), 36085 (Richmond)
+        - Data source: https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/
+        - Data is saved to LOCAL_OUTPUT_DIR/noaa-nclimgrid-daily/nyc_fips_weather_data.csv
+        - Temperature units: Celsius
+        - Precipitation units: millimeters
+    
+    Example:
+        >>> df_weather = fetch_noaa_weather_data(start_year=2010, end_year=2023)
+    """
+    # NYC county FIPS codes
+    nyc_fips = ['36005', '36047', '36061', '36081', '36085']
+    
+    # Years and months to loop over
+    years = range(start_year, end_year + 1)
+    months = range(1, 13)
+    
+    # Base S3 URL
+    base_url = "https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/EpiNOAA/v1-0-0/parquet/cty/YEAR={year}/STATUS=scaled/{yyyymm}.parquet"
+    
+    # List to store all data
+    all_dfs = []
+    
+    for year in years:
+        for month in months:
+            yyyymm = f"{year}{month:02d}"
+            url = base_url.format(year=year, yyyymm=yyyymm)
+            
+            # Read Parquet file from S3
+            try:
+                df = pd.read_parquet(url)
+                df_nyc = df[df["fips"].isin(nyc_fips)]
+                df_nyc = df_nyc[["date", "fips", "tmax", "tmin", "tavg", "prcp"]]
+                all_dfs.append(df_nyc)
+                print(f"Loaded {yyyymm}, rows: {len(df_nyc)}")
+            except Exception as e:
+                print(f"Error loading {url}: {e}")
+                continue
+    
+    # Combine all months/years
+    df_weather = pd.concat(all_dfs, ignore_index=True)
+    
+    # Convert types and add derived columns
+    for col in ["tmax", "tmin", "tavg", "prcp"]:
+        df_weather[col] = df_weather[col].astype(float)
+    
+    df_weather["date"] = pd.to_datetime(df_weather["date"])
+    df_weather["year"] = df_weather["date"].dt.year
+    df_weather["month"] = df_weather["date"].dt.month
+    df_weather["day"] = df_weather["date"].dt.day
+    
+    if save:
+        output_path = os.path.join(LOCAL_OUTPUT_DIR, "noaa-nclimgrid-daily", "nyc_fips_weather_data.csv")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df_weather.to_csv(output_path, index=False)
+        print(f"Saved weather data to {output_path}")
+    
+    return df_weather
 
