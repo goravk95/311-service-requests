@@ -195,13 +195,20 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def forward_fill_population_data(df_pop: pd.DataFrame) -> pd.DataFrame:
+def extend_population_data(df_pop: pd.DataFrame) -> pd.DataFrame:
     """
-    Forward fill population data for 2024 and 2025 based on historical growth rates.
+    Extend population data by forward filling 2024-2025 and backfilling 2010-2012.
     
-    Calculates annual population change rates based on 2018-2023 data and uses
-    these rates to project population for 2024 and 2025. For GEOIDs with missing
-    or invalid growth rates, uses the overall population growth rate as fallback.
+    Forward fill (2024-2025):
+    - Calculates annual population change rates based on 2018-2023 data
+    - Projects population for 2024 and 2025 using these rates
+    
+    Backfill (2010-2012):
+    - Calculates annual population change rates based on 2013-2018 data
+    - Projects population backwards for 2010, 2011, and 2012 using these rates
+    
+    For GEOIDs with missing or invalid growth rates, uses the overall 
+    population growth rate as fallback.
     
     Parameters
     ----------
@@ -211,10 +218,11 @@ def forward_fill_population_data(df_pop: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Population dataframe with 2024 and 2025 data appended
+        Population dataframe with 2010-2012 and 2024-2025 data appended
     """
     df_pop = df_pop.copy()
     
+    # ========== FORWARD FILL: 2024 and 2025 ==========
     # Get the most recent population data (2023 and 2018) for each GEOID
     df_2023 = df_pop[df_pop['year'] == 2023][['GEOID', 'population']].rename(
         columns={"population": "pop_2023"}
@@ -223,42 +231,88 @@ def forward_fill_population_data(df_pop: pd.DataFrame) -> pd.DataFrame:
         columns={"population": "pop_2018"}
     )
     
-    # Merge to calculate percent change
-    df_change = df_2018.merge(df_2023, on='GEOID', how='inner')
-    df_change['pct_change_5yr'] = (
-        (df_change['pop_2023'] - df_change['pop_2018']) / df_change['pop_2018']
+    # Merge to calculate percent change (forward)
+    df_change_forward = df_2018.merge(df_2023, on='GEOID', how='inner')
+    df_change_forward['pct_change_5yr'] = (
+        (df_change_forward['pop_2023'] - df_change_forward['pop_2018']) / df_change_forward['pop_2018']
     )
-    df_change['annual_change'] = df_change['pct_change_5yr'] / 5
+    df_change_forward['annual_change'] = df_change_forward['pct_change_5yr'] / 5
     
-    # Calculate overall population change rate for fallback
-    overall_pop_2018 = df_change['pop_2018'].sum()
-    overall_pop_2023 = df_change['pop_2023'].sum()
-    overall_pct_change_5yr = (overall_pop_2023 - overall_pop_2018) / overall_pop_2018
-    overall_annual_change = overall_pct_change_5yr / 5
+    # Calculate overall population change rate for fallback (forward)
+    overall_pop_2018 = df_change_forward['pop_2018'].sum()
+    overall_pop_2023 = df_change_forward['pop_2023'].sum()
+    overall_pct_change_5yr_forward = (overall_pop_2023 - overall_pop_2018) / overall_pop_2018
+    overall_annual_change_forward = overall_pct_change_5yr_forward / 5
     
     # For values where annual_change is inf or nan, use the overall population change rate
-    df_change['annual_change'] = df_change['annual_change'].fillna(overall_annual_change)
-    df_change['annual_change'] = df_change['annual_change'].replace(
-        [float('inf'), float('-inf')], overall_annual_change
+    df_change_forward['annual_change'] = df_change_forward['annual_change'].fillna(overall_annual_change_forward)
+    df_change_forward['annual_change'] = df_change_forward['annual_change'].replace(
+        [float('inf'), float('-inf')], overall_annual_change_forward
     )
     
     # Calculate 2024 and 2025 populations
-    df_change['pop_2024'] = df_change['pop_2023'] * (1 + df_change['annual_change'] * 1)
-    df_change['pop_2025'] = df_change['pop_2023'] * (1 + df_change['annual_change'] * 2)
+    df_change_forward['pop_2024'] = df_change_forward['pop_2023'] * (1 + df_change_forward['annual_change'] * 1)
+    df_change_forward['pop_2025'] = df_change_forward['pop_2023'] * (1 + df_change_forward['annual_change'] * 2)
     
     # Round to integers
-    df_change['pop_2024'] = df_change['pop_2024'].round()
-    df_change['pop_2025'] = df_change['pop_2025'].round()
+    df_change_forward['pop_2024'] = df_change_forward['pop_2024'].round()
+    df_change_forward['pop_2025'] = df_change_forward['pop_2025'].round()
     
     # Create new rows for 2024 and 2025
-    df_2024 = df_change[['GEOID', 'pop_2024']].rename(columns={'pop_2024': 'population'})
+    df_2024 = df_change_forward[['GEOID', 'pop_2024']].rename(columns={'pop_2024': 'population'})
     df_2024['year'] = 2024
     
-    df_2025 = df_change[['GEOID', 'pop_2025']].rename(columns={'pop_2025': 'population'})
+    df_2025 = df_change_forward[['GEOID', 'pop_2025']].rename(columns={'pop_2025': 'population'})
     df_2025['year'] = 2025
     
+    # ========== BACKFILL: 2010, 2011, and 2012 ==========
+    # Get population data for 2013 and 2018 for each GEOID
+    df_2013 = df_pop[df_pop['year'] == 2013][['GEOID', 'population']].rename(
+        columns={"population": "pop_2013"}
+    )
+    # Reuse df_2018 from above
+    
+    # Merge to calculate percent change (backward)
+    df_change_backward = df_2013.merge(df_2018, on='GEOID', how='inner')
+    df_change_backward['pct_change_5yr'] = (
+        (df_change_backward['pop_2018'] - df_change_backward['pop_2013']) / df_change_backward['pop_2013']
+    )
+    df_change_backward['annual_change'] = df_change_backward['pct_change_5yr'] / 5
+    
+    # Calculate overall population change rate for fallback (backward)
+    overall_pop_2013 = df_change_backward['pop_2013'].sum()
+    overall_pop_2018_back = df_change_backward['pop_2018'].sum()
+    overall_pct_change_5yr_backward = (overall_pop_2018_back - overall_pop_2013) / overall_pop_2013
+    overall_annual_change_backward = overall_pct_change_5yr_backward / 5
+    
+    # For values where annual_change is inf or nan, use the overall population change rate
+    df_change_backward['annual_change'] = df_change_backward['annual_change'].fillna(overall_annual_change_backward)
+    df_change_backward['annual_change'] = df_change_backward['annual_change'].replace(
+        [float('inf'), float('-inf')], overall_annual_change_backward
+    )
+    
+    # Calculate 2010, 2011, and 2012 populations (working backwards from 2013)
+    df_change_backward['pop_2012'] = df_change_backward['pop_2013'] * (1 + df_change_backward['annual_change'] * (-1))
+    df_change_backward['pop_2011'] = df_change_backward['pop_2013'] * (1 + df_change_backward['annual_change'] * (-2))
+    df_change_backward['pop_2010'] = df_change_backward['pop_2013'] * (1 + df_change_backward['annual_change'] * (-3))
+    
+    # Round to integers
+    df_change_backward['pop_2012'] = df_change_backward['pop_2012'].round()
+    df_change_backward['pop_2011'] = df_change_backward['pop_2011'].round()
+    df_change_backward['pop_2010'] = df_change_backward['pop_2010'].round()
+    
+    # Create new rows for 2010, 2011, and 2012
+    df_2012 = df_change_backward[['GEOID', 'pop_2012']].rename(columns={'pop_2012': 'population'})
+    df_2012['year'] = 2012
+    
+    df_2011 = df_change_backward[['GEOID', 'pop_2011']].rename(columns={'pop_2011': 'population'})
+    df_2011['year'] = 2011
+    
+    df_2010 = df_change_backward[['GEOID', 'pop_2010']].rename(columns={'pop_2010': 'population'})
+    df_2010['year'] = 2010
+    
     # Concatenate with original data
-    df_extended = pd.concat([df_pop, df_2024, df_2025], ignore_index=True)
+    df_extended = pd.concat([df_pop, df_2010, df_2011, df_2012, df_2024, df_2025], ignore_index=True)
     
     return df_extended
 
@@ -292,8 +346,8 @@ def merge_census_data(
     df_pop = pd.read_csv(census_data_path)
     df_pop['GEOID'] = df_pop['GEOID'].astype(str)
     
-    # Forward fill population data for 2024 and 2025
-    df_pop = forward_fill_population_data(df_pop)
+    # Extend population data for 2010-2012 and 2024-2025
+    df_pop = extend_population_data(df_pop)
     
     # Load census block group shapefile
     gdf_bg = gpd.read_file(shapefile_path)
@@ -316,7 +370,7 @@ def merge_census_data(
         on=['GEOID', 'year'],
         how='left'
     )
-    
+
     return df_merged
 
 
@@ -354,7 +408,7 @@ def merge_weather_data(
         df_weather[['fips', 'date', 'tmax', 'tmin', 'tavg', 'prcp']],
         left_on=['fips', 'created_date_date'],
         right_on=['fips', 'date'],
-        how='left'
+        how='inner'
     )
     df_merged = df_merged.drop(columns=['date'])
 
@@ -424,6 +478,7 @@ def preprocess_and_merge_external_data(
     df = merge_weather_data(df, weather_data_path)
     print("Data Shape:", df.shape)
 
+    print()
     print("Final Data Shape:", df.shape)
 
     return df
