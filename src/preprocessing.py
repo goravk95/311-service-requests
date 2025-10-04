@@ -16,6 +16,29 @@ from typing import Optional, Tuple, List
 from . import config
 
 
+def load_dohmh_data(data_path: Optional[str] = None) -> pd.DataFrame:
+    """
+    Load DOHMH service request data from S3/local parquet files.
+    
+    Parameters
+    ----------
+    data_path : str, optional
+        Path to the parquet data directory. If None, uses config.SERVICE_REQUESTS_DATA_PATH
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with DOHMH service request data
+
+    """
+    if data_path is None:
+        data_path = config.SERVICE_REQUESTS_DATA_PATH
+    
+    df = pd.read_parquet(data_path)
+    
+    return df
+
+
 def create_date_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Create derived date and time-based features.
@@ -162,9 +185,9 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
             "resolution_description"
         ]
     )
-
+ 
     df = df[df['resolution_outcome'] != 'duplicate_of_previous']
-
+ 
     df = df[df['complaint_family'].isin(config.COMPLAINT_FAMILIES)]
     
     df = df[df['is_closed_before_created'] == False]
@@ -259,7 +282,8 @@ def merge_weather_data(
     # Merge weather data
     df_merged = df.merge(
         df_weather[['fips', 'date', 'tmax', 'tmin', 'tavg', 'prcp']],
-        on=['fips', 'date'],
+        left_on=['fips', 'created_date_date'],
+        right_on=['fips', 'date'],
         how='left'
     )
     
@@ -272,11 +296,6 @@ def preprocess_dohmh_data(
 ) -> pd.DataFrame:
     """
     Main preprocessing pipeline for DOHMH service request data.
-    
-    Applies the following steps:
-    1. Create date features
-    2. Map freetext columns to standardized categories
-    3. Filter and clean (remove duplicates, invalid dates, unwanted families)
     
     Parameters
     ----------
@@ -298,48 +317,43 @@ def preprocess_dohmh_data(
 
 
 def preprocess_and_merge_external_data(
-    df: pd.DataFrame,
-    census_data_path: Optional[str] = None,
-    shapefile_path: Optional[str] = None,
-    weather_data_path: Optional[str] = None,
-    mappings_path: Optional[str] = None
 ) -> pd.DataFrame:
     """
-    Full pipeline: preprocess DOHMH data and merge external datasets.
+    Full pipeline: load, preprocess, and merge external datasets.
     
-    Combines the main preprocessing pipeline with census and weather data merging.
+    Loads DOHMH data from config.SERVICE_REQUESTS_DATA_PATH, preprocesses it,
+    and merges census and weather data.
     
     Parameters
     ----------
-    df : pd.DataFrame
-        Input dataframe with raw DOHMH service request data
-    census_data_path : str, optional
-        Path to CSV file with population data. If None, uses config.CENSUS_DATA_PATH
-    shapefile_path : str, optional
-        Path to directory containing census block group shapefiles. If None, uses config.SHAPEFILE_PATH
-    weather_data_path : str, optional
-        Path to CSV file with weather data. If None, uses config.WEATHER_DATA_PATH
-    mappings_path : str, optional
-        Path to Excel file with freetext mappings. If None, uses config.MAPPINGS_PATH
         
     Returns
     -------
     pd.DataFrame
         Fully preprocessed dataframe with external data merged
     """
-    # Use default paths from config if not provided
-    if census_data_path is None:
-        census_data_path = str(config.CENSUS_DATA_PATH)
-    if shapefile_path is None:
-        shapefile_path = str(config.SHAPEFILE_PATH)
-    if weather_data_path is None:
-        weather_data_path = str(config.WEATHER_DATA_PATH)
-    
+    print("Loading DOHMH data...")
+    df = load_dohmh_data()
+    print("Data Shape:", df.shape)
+
+    census_data_path = str(config.CENSUS_DATA_PATH)
+    shapefile_path = str(config.SHAPEFILE_PATH)
+    weather_data_path = str(config.WEATHER_DATA_PATH)
+    mappings_path = str(config.MAPPINGS_PATH)
+
+    print("Preprocessing DOHMH data...")
     df = preprocess_dohmh_data(df, mappings_path=mappings_path)
+    print("Data Shape:", df.shape)
     
+    print("Merging census data...")
     df = merge_census_data(df, census_data_path, shapefile_path)
-    
+    print("Data Shape:", df.shape)
+
+    print("Merging weather data...")
     df = merge_weather_data(df, weather_data_path)
-    
+    print("Data Shape:", df.shape)
+
+    print("Final Data Shape:", df.shape)
+
     return df
 

@@ -15,20 +15,7 @@ import pandas as pd
 from sodapy import Socrata
 import censusdata
 
-from .config import (
-    API_ENDPOINT,
-    APP_TOKEN,
-    API_KEY_ID,
-    API_KEY_SECRET,
-    DATASET_ID,
-    DATE_COLUMN,
-    S3_OUTPUT_DIR,
-    LOCAL_OUTPUT_DIR,
-    DATA_START_YEAR,
-    DATA_END_YEAR,
-    MAX_CONCURRENT_REQUESTS,
-    SCHEMA,
-)
+from . import config
 
 
 def _create_socrata_client(api_endpoint, app_token, username, password):
@@ -87,20 +74,36 @@ def _add_missing_schema_columns(df):
     Returns:
         pd.DataFrame: DataFrame with all schema columns present.
     """
-    for col in SCHEMA.names:
+    for col in config.SCHEMA.names:
         if col not in df.columns:
             df[col] = pd.NA
     return df
 
 
-def _process_dataframe(df):
-    """Process the DataFrame to match the schema."""
+def _process_dataframe(df, use_full_schema=True):
+    """Process the DataFrame to match the schema.
+    
+    Args:
+        df (pd.DataFrame): The DataFrame to process.
+        use_full_schema (bool): If True, add missing columns from schema and enforce full schema.
+                               If False, only convert types for existing columns.
+    
+    Returns:
+        pd.DataFrame: Processed DataFrame.
+    """
     df = _convert_dataframe_types(df)
-    df = _add_missing_schema_columns(df)
+    if use_full_schema:
+        df = _add_missing_schema_columns(df)
     return df
 
 
-def _fetch_data_for_month(year: int, month: int, save: bool = True):
+def _fetch_data_for_month(
+    year: int, 
+    month: int, 
+    save: bool = True,
+    columns: list = None,
+    additional_filter: str = None
+):
     """Fetch and save 311 service request data for a specific month.
 
     This function runs synchronously in a worker thread. It creates its own
@@ -110,15 +113,25 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
         year (int): The year to fetch data for.
         month (int): The month to fetch data for (1-12).
         save (bool): Whether to save the data to disk. Defaults to True.
+        columns (list, optional): List of column names to select. If None, selects all columns.
+        additional_filter (str, optional): Additional WHERE clause filter (e.g., "agency = 'DOHMH'").
 
     Notes:
         - Data is saved as Parquet files in year=YYYY/month=MM partition structure.
         - Empty results are logged but no file is created.
         - Memory is explicitly freed after processing each month.
+        
+    Schema Behavior:
+        - If columns=None: Uses config.SCHEMA (full schema), adds missing columns as NA
+        - If columns specified: Infers schema from actual columns, no padding with NA values
+          This keeps files smaller when fetching subsets of columns.
     """
     # Create per-thread client to avoid connection sharing issues
     client = _create_socrata_client(
-        api_endpoint=API_ENDPOINT, app_token=APP_TOKEN, username=API_KEY_ID, password=API_KEY_SECRET
+        api_endpoint=config.API_ENDPOINT,
+        app_token=config.APP_TOKEN,
+        username=config.API_KEY_ID,
+        password=config.API_KEY_SECRET,
     )
 
     start = f"{year}-{month:02d}-01T00:00:00"
@@ -127,27 +140,45 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
     else:
         end = f"{year}-{month+1:02d}-01T00:00:00"
 
-    where_clause = f"{DATE_COLUMN} >= '{start}' AND {DATE_COLUMN} < '{end}'"
+    # Build WHERE clause
+    where_clause = f"{config.DATE_COLUMN} >= '{start}' AND {config.DATE_COLUMN} < '{end}'"
+    if additional_filter:
+        where_clause = f"{where_clause} AND {additional_filter}"
+    
     print(f"Fetching {year}-{month:02d} ...")
 
     # client.get_all handles paging internally (blocking)
-    results = list(client.get_all(DATASET_ID, where=where_clause))
+    # If columns are specified, pass them as select parameter
+    if columns:
+        results = list(client.get_all(
+            config.DATASET_ID, 
+            where=where_clause,
+            select=",".join(columns)
+        ))
+    else:
+        results = list(client.get_all(config.DATASET_ID, where=where_clause))
 
     if results:
         df = pd.DataFrame.from_records(results)
 
-        # Convert types to match schema
-        df = _process_dataframe(df)
+        # Determine if we should use full schema
+        # Only use full schema when ALL columns are requested (columns=None)
+        use_full_schema = columns is None
+
+        # Convert types (and optionally add missing columns)
+        df = _process_dataframe(df, use_full_schema=use_full_schema)
 
         if save:
             # Write to year/month partition
-            file_path = os.path.join(
-                S3_OUTPUT_DIR, f"year={year}/month={month:02d}/part-0000.parquet"
-            )
-            df.to_parquet(file_path, index=False, schema=SCHEMA)
-            print(f"Saved {file_path} ({len(df):,} rows)")
+            file_path = config.SERVICE_REQUESTS_DATA_PATH + f"/year={year}/month={month:02d}/part-0000.parquet"
+            # Only enforce schema when using full schema, otherwise let pandas infer
+            if use_full_schema:
+                df.to_parquet(file_path, index=False, schema=config.SCHEMA)
+            else:
+                df.to_parquet(file_path, index=False)
+            print(f"Saved {file_path} ({len(df):,} rows, {len(df.columns)} columns)")
         else:
-            print(f"Fetched {year}-{month:02d} ({len(df):,} rows) - not saved")
+            print(f"Fetched {year}-{month:02d} ({len(df):,} rows, {len(df.columns)} columns) - not saved")
 
         # Clean up memory
         del df
@@ -157,7 +188,14 @@ def _fetch_data_for_month(year: int, month: int, save: bool = True):
         print(f"No data for {year}-{month:02d}")
 
 
-async def fetch_and_save_month(year: int, month: int, sem: asyncio.Semaphore, save: bool = True):
+async def fetch_and_save_month(
+    year: int, 
+    month: int, 
+    sem: asyncio.Semaphore, 
+    save: bool = True,
+    columns: list = None,
+    additional_filter: str = None
+):
     """Asynchronously fetch and save data for a specific month with concurrency control.
 
     Args:
@@ -165,6 +203,8 @@ async def fetch_and_save_month(year: int, month: int, sem: asyncio.Semaphore, sa
         month (int): The month to fetch data for (1-12).
         sem (asyncio.Semaphore): Semaphore to limit concurrent API requests.
         save (bool): Whether to save the data to disk. Defaults to True.
+        columns (list, optional): List of column names to select. If None, selects all columns.
+        additional_filter (str, optional): Additional WHERE clause filter (e.g., "agency = 'DOHMH'").
 
     Notes:
         The semaphore ensures we don't exceed MAX_CONCURRENT_REQUESTS simultaneous
@@ -172,10 +212,14 @@ async def fetch_and_save_month(year: int, month: int, sem: asyncio.Semaphore, sa
     """
     async with sem:
         # Run the synchronous worker in a thread pool
-        await asyncio.to_thread(_fetch_data_for_month, year, month, save)
+        await asyncio.to_thread(_fetch_data_for_month, year, month, save, columns, additional_filter)
 
 
-async def fetch_all_service_requests(save: bool = True):
+async def fetch_all_service_requests(
+    save: bool = True, 
+    columns: list = None,
+    additional_filter: str = None
+):
     """Fetch all NYC 311 service request data across the configured date range.
 
     This function orchestrates the parallel download of data for all months
@@ -183,26 +227,46 @@ async def fetch_all_service_requests(save: bool = True):
 
     Args:
         save (bool): Whether to save the data to disk. Defaults to True.
+        columns (list, optional): List of column names to select. If None, selects all columns.
+            For DOHMH data, pass config.DOHDMH_COLUMNS.
+        additional_filter (str, optional): Additional WHERE clause filter.
+            For DOHMH data, pass config.AGENCY_FILTER.
 
     Concurrency is controlled by MAX_CONCURRENT_REQUESTS to respect API limits.
     Data is saved as partitioned Parquet files organized by year and month.
 
-    Example:
+    Examples:
         >>> import asyncio
+        >>> from src import config
+        >>> # Fetch all data
         >>> asyncio.run(fetch_all_service_requests())
+        >>> 
+        >>> # Fetch only DOHMH data with selected columns
+        >>> asyncio.run(fetch_all_service_requests(
+        ...     columns=config.DOHDMH_COLUMNS,
+        ...     additional_filter=config.AGENCY_FILTER
+        ... ))
 
     Raises:
         Any exceptions from individual month fetches will propagate up.
     """
-    sem = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    sem = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
 
-    years = range(DATA_START_YEAR, DATA_END_YEAR)
+    years = range(config.DATA_START_YEAR, config.DATA_END_YEAR)
     months = range(1, 13)
-    tasks = [fetch_and_save_month(y, m, sem, save) for y in years for m in months]
+    tasks = [
+        fetch_and_save_month(y, m, sem, save, columns, additional_filter) 
+        for y in years 
+        for m in months
+    ]
     await asyncio.gather(*tasks)
 
 
-async def fetch_current_month_service_requests(save: bool = True):
+async def fetch_current_month_service_requests(
+    save: bool = True,
+    columns: list = None,
+    additional_filter: str = None
+):
     """Fetch and overwrite data for the current month only.
 
     This function fetches NYC 311 service request data for the current month
@@ -211,12 +275,24 @@ async def fetch_current_month_service_requests(save: bool = True):
 
     Args:
         save (bool): Whether to save the data to disk. Defaults to True.
+        columns (list, optional): List of column names to select. If None, selects all columns.
+            For DOHMH data, pass config.DOHDMH_COLUMNS.
+        additional_filter (str, optional): Additional WHERE clause filter.
+            For DOHMH data, pass config.AGENCY_FILTER.
 
     The function automatically determines the current year and month from the system clock.
 
-    Example:
+    Examples:
         >>> import asyncio
-        >>> asyncio.run(fetch_current_month())
+        >>> from src import config
+        >>> # Fetch all current month data
+        >>> asyncio.run(fetch_current_month_service_requests())
+        >>> 
+        >>> # Fetch only DOHMH data for current month
+        >>> asyncio.run(fetch_current_month_service_requests(
+        ...     columns=config.DOHDMH_COLUMNS,
+        ...     additional_filter=config.AGENCY_FILTER
+        ... ))
 
     Notes:
         - The existing file for the current month (if any) will be overwritten.
@@ -230,7 +306,7 @@ async def fetch_current_month_service_requests(save: bool = True):
     sem = asyncio.Semaphore(1)
 
     print(f"Fetching current month: {current_year}-{current_month:02d}")
-    await fetch_and_save_month(current_year, current_month, sem, save)
+    await fetch_and_save_month(current_year, current_month, sem, save, columns, additional_filter)
     print("Current month data updated successfully!")
 
 
@@ -254,7 +330,7 @@ def fetch_acs_census_population_data(
     Notes:
         - NYC counties: 005 (Bronx), 047 (Kings/Brooklyn), 061 (Manhattan),
           081 (Queens), 085 (Richmond/Staten Island)
-        - Data is saved to LOCAL_OUTPUT_DIR/acs-population/combined_population_data.csv
+        - Data is saved to DATA_DIR/acs-population/combined_population_data.csv
 
     Example:
         >>> df_pop = fetch_acs_census_population_data(start_year=2013, end_year=2023)
@@ -316,9 +392,7 @@ def fetch_acs_census_population_data(
     df_pop = df_pop[["GEOID", "population", "year"]]
 
     if save:
-        output_path = os.path.join(
-            LOCAL_OUTPUT_DIR, "acs-population", "combined_population_data.csv"
-        )
+        output_path = config.DATA_DIR / "acs-population" / "combined_population_data.csv"
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df_pop.to_csv(output_path, index=False)
         print(f"Saved ACS census data to {output_path}")
@@ -345,7 +419,7 @@ def fetch_noaa_weather_data(start_year: int = 2010, end_year: int = 2025, save: 
         - NYC county FIPS: 36005 (Bronx), 36047 (Kings), 36061 (Manhattan),
           36081 (Queens), 36085 (Richmond)
         - Data source: https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/
-        - Data is saved to LOCAL_OUTPUT_DIR/noaa-nclimgrid-daily/nyc_fips_weather_data.csv
+        - Data is saved to DATA_DIR/noaa-nclimgrid-daily/nyc_fips_weather_data.csv
         - Temperature units: Celsius
         - Precipitation units: millimeters
 
@@ -394,11 +468,10 @@ def fetch_noaa_weather_data(start_year: int = 2010, end_year: int = 2025, save: 
     df_weather["day"] = df_weather["date"].dt.day
 
     if save:
-        output_path = os.path.join(
-            LOCAL_OUTPUT_DIR, "noaa-nclimgrid-daily", "nyc_fips_weather_data.csv"
-        )
+        output_path = config.DATA_DIR / "noaa-nclimgrid-daily" / "nyc_fips_weather_data.csv"
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df_weather.to_csv(output_path, index=False)
         print(f"Saved weather data to {output_path}")
 
     return df_weather
+

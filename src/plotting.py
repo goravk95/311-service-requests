@@ -1,5 +1,5 @@
 """
-Plotting functions
+Plotting functions for NYC 311 data visualization.
 """
 
 import os
@@ -43,7 +43,7 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
     # -------------------
     # 1) Load & prep NYC boundaries (TIGER block groups -> filter -> dissolve to boroughs)
     # -------------------
-    bg_shapefile = os.path.abspath(os.path.join(os.getcwd(), "..", "src", "resources", "tl_2022_36_bg"))
+    bg_shapefile = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "tl_2022_36_bg"))
     gdf_bg = gpd.read_file(bg_shapefile)
 
     # Ensure we only take NY State (36) and NYC counties
@@ -152,3 +152,4 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
 
     plt.tight_layout()
     return fig, ax
+
