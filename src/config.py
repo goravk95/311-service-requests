@@ -72,6 +72,7 @@ MAPPINGS_PATH = RESOURCES_DIR / "mappings" / "freetext_column_mappings.xlsx"
 AGENCY = "DOHMH"
 AGENCY_FILTER = f"agency = '{AGENCY}'"
 DOHDMH_COLUMNS = [
+    "unique_key",
     "due_date",
     "facility_type",
     "cross_street_2",
