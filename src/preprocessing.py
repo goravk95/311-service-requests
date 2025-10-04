@@ -10,8 +10,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
-from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional
 
 from . import config
 
@@ -196,6 +195,74 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def forward_fill_population_data(df_pop: pd.DataFrame) -> pd.DataFrame:
+    """
+    Forward fill population data for 2024 and 2025 based on historical growth rates.
+    
+    Calculates annual population change rates based on 2018-2023 data and uses
+    these rates to project population for 2024 and 2025. For GEOIDs with missing
+    or invalid growth rates, uses the overall population growth rate as fallback.
+    
+    Parameters
+    ----------
+    df_pop : pd.DataFrame
+        Population dataframe with GEOID, year, and population columns
+        
+    Returns
+    -------
+    pd.DataFrame
+        Population dataframe with 2024 and 2025 data appended
+    """
+    df_pop = df_pop.copy()
+    
+    # Get the most recent population data (2023 and 2018) for each GEOID
+    df_2023 = df_pop[df_pop['year'] == 2023][['GEOID', 'population']].rename(
+        columns={"population": "pop_2023"}
+    )
+    df_2018 = df_pop[df_pop['year'] == 2018][['GEOID', 'population']].rename(
+        columns={"population": "pop_2018"}
+    )
+    
+    # Merge to calculate percent change
+    df_change = df_2018.merge(df_2023, on='GEOID', how='inner')
+    df_change['pct_change_5yr'] = (
+        (df_change['pop_2023'] - df_change['pop_2018']) / df_change['pop_2018']
+    )
+    df_change['annual_change'] = df_change['pct_change_5yr'] / 5
+    
+    # Calculate overall population change rate for fallback
+    overall_pop_2018 = df_change['pop_2018'].sum()
+    overall_pop_2023 = df_change['pop_2023'].sum()
+    overall_pct_change_5yr = (overall_pop_2023 - overall_pop_2018) / overall_pop_2018
+    overall_annual_change = overall_pct_change_5yr / 5
+    
+    # For values where annual_change is inf or nan, use the overall population change rate
+    df_change['annual_change'] = df_change['annual_change'].fillna(overall_annual_change)
+    df_change['annual_change'] = df_change['annual_change'].replace(
+        [float('inf'), float('-inf')], overall_annual_change
+    )
+    
+    # Calculate 2024 and 2025 populations
+    df_change['pop_2024'] = df_change['pop_2023'] * (1 + df_change['annual_change'] * 1)
+    df_change['pop_2025'] = df_change['pop_2023'] * (1 + df_change['annual_change'] * 2)
+    
+    # Round to integers
+    df_change['pop_2024'] = df_change['pop_2024'].round()
+    df_change['pop_2025'] = df_change['pop_2025'].round()
+    
+    # Create new rows for 2024 and 2025
+    df_2024 = df_change[['GEOID', 'pop_2024']].rename(columns={'pop_2024': 'population'})
+    df_2024['year'] = 2024
+    
+    df_2025 = df_change[['GEOID', 'pop_2025']].rename(columns={'pop_2025': 'population'})
+    df_2025['year'] = 2025
+    
+    # Concatenate with original data
+    df_extended = pd.concat([df_pop, df_2024, df_2025], ignore_index=True)
+    
+    return df_extended
+
+
 def merge_census_data(
     df: pd.DataFrame,
     census_data_path: str,
@@ -224,6 +291,9 @@ def merge_census_data(
     # Load population data
     df_pop = pd.read_csv(census_data_path)
     df_pop['GEOID'] = df_pop['GEOID'].astype(str)
+    
+    # Forward fill population data for 2024 and 2025
+    df_pop = forward_fill_population_data(df_pop)
     
     # Load census block group shapefile
     gdf_bg = gpd.read_file(shapefile_path)
@@ -286,7 +356,8 @@ def merge_weather_data(
         right_on=['fips', 'date'],
         how='left'
     )
-    
+    df_merged = df_merged.drop(columns=['date'])
+
     return df_merged
 
 
