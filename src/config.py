@@ -37,8 +37,8 @@ API_KEY_SECRET = os.getenv("SOCRATA_API_KEY_SECRET")
 # DATA FETCHING CONFIGURATION
 # =============================================================================
 
-DATA_START_YEAR = 2010
-DATA_END_YEAR = 2026
+DATA_START_YEAR = 2013
+DATA_END_YEAR = 2024
 
 # Performance Settings
 MAX_CONCURRENT_REQUESTS = 20
