@@ -14,7 +14,6 @@ from .utils import (
     aggregate_on_parent,
     add_history_features,
     make_descriptor_tfidf,
-    merge_asof_by_group,
     compute_time_based_rolling_counts
 )
 
@@ -150,7 +149,7 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     result = result[result['created_date'].notna()].copy()
     
     categorical_cols = ['complaint_family', 'open_data_channel_type', 'location_type',
-                       'borough', 'facility_type', 'address_type']
+                       'borough', 'facility_type']
     
     for col in categorical_cols:
         result[col] = result[col].fillna('_missing').astype(str)
@@ -176,7 +175,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     
     history_panel = result.groupby(['hex', 'complaint_family', 'day']).size().reset_index(name='daily_count')
     
-    # Compute rolling features per group
     def compute_history(group):
         group = group.sort_values('day')
         
@@ -214,30 +212,43 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
             result[col] = result[col].fillna(0.0)
     
     result['site_key'] = result['bbl'].fillna('unknown')
- 
-    result = result.sort_values('created_date')
-    print('computing repeat counts...')
-    def compute_repeat_counts(group):
-        repeat_14d = []
-        repeat_28d = []
+
+    print('computing site repeat counts...')
+    site_panel = result.groupby(['site_key', 'day']).size().reset_index(name='daily_site_count')
+    
+    # Compute rolling features per site
+    def compute_site_history(group):
+        group = group.sort_values('day')
         
-        for idx, row in group.iterrows():
-            current_time = row['created_date']
-            
-            # Count prior tickets at same site in window
-            mask_14d = (group['created_date'] >= current_time - pd.Timedelta(days=14)) & \
-                       (group['created_date'] < current_time)
-            mask_28d = (group['created_date'] >= current_time - pd.Timedelta(days=28)) & \
-                       (group['created_date'] < current_time)
-            
-            repeat_14d.append(mask_14d.sum())
-            repeat_28d.append(mask_28d.sum())
+        # 14-day rolling count
+        group['repeat_site_14d'] = group['daily_site_count'].rolling(window=14, min_periods=1).sum()
         
-        group['repeat_site_14d'] = repeat_14d
-        group['repeat_site_28d'] = repeat_28d
+        # 28-day rolling count
+        group['repeat_site_28d'] = group['daily_site_count'].rolling(window=28, min_periods=1).sum()
+        
         return group
     
-    result = result.groupby('site_key', group_keys=False).apply(compute_repeat_counts)
+    site_panel = site_panel.groupby('site_key', group_keys=False).apply(compute_site_history)
+    
+    # Merge back to tickets using as-of join
+    result = result.sort_values(['day', 'site_key'])
+    site_panel = site_panel.sort_values(['day', 'site_key'])
+    print('merging site history panel...')
+    result = pd.merge_asof(
+        result,
+        site_panel[['site_key', 'day', 'repeat_site_14d', 'repeat_site_28d']],
+        on='day',
+        by='site_key',
+        direction='backward'
+    )
+    
+    # Subtract 1 to exclude current ticket from the count (we want prior tickets only)
+    result['repeat_site_14d'] = (result['repeat_site_14d'] - 1).clip(lower=0)
+    result['repeat_site_28d'] = (result['repeat_site_28d'] - 1).clip(lower=0)
+    
+    # Fill any missing values
+    result['repeat_site_14d'] = result['repeat_site_14d'].fillna(0.0)
+    result['repeat_site_28d'] = result['repeat_site_28d'].fillna(0.0)
     
     # === TEXT FEATURES (TF-IDF) ===
     tfidf_matrix = None
