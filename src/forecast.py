@@ -11,8 +11,8 @@ from typing import Dict, List, Tuple, Optional
 import joblib
 from pathlib import Path
 
-# import optuna
-# from optuna.samplers import TPESampler
+import optuna
+from optuna.samplers import TPESampler
 from typing import Dict, Optional
 import warnings
 from matplotlib import pyplot as plt
@@ -460,79 +460,135 @@ def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> D
     return bundle
 
 
-# def tune(
-#     X_train: pd.DataFrame,
-#     y_train: pd.Series,
-#     X_val: pd.DataFrame,
-#     y_val: pd.Series,
-#     cat_cols: Optional[list] = None,
-#     n_trials: int = 30,
-#     random_state: int = 42
-# ) -> Dict:
-#     """
-#     Tune LightGBM forecast model using Optuna.
-#     Optimizes Poisson deviance on validation set.
+def tune(
+    df_input: pd.DataFrame,
+    horizon: int,
+    input_columns: list,
+    numerical_columns: list,
+    categorical_columns: list,
+    date_column: str = "week",
+    test_cutoff: str = "2024-01-01",
+    n_trials: int = 30,
+    random_state: int = 42
+) -> Dict:
+    """
+    Tune LightGBM forecast model using Optuna.
+    Optimizes Poisson deviance on test set.
+    Uses same pipeline structure as fit_pipeline with OHE.
 
-#     Args:
-#         X_train: Training features
-#         y_train: Training targets
-#         X_val: Validation features
-#         y_val: Validation targets
-#         cat_cols: Categorical column names
-#         n_trials: Number of Optuna trials
-#         random_state: Random seed
+    Args:
+        df_input: Input DataFrame
+        target_column: Target column name
+        input_columns: List of columns to use as model inputs
+        numerical_columns: List of numeric columns (passed through)
+        categorical_columns: List of categorical columns (one-hot encoded)
+        date_column: Name of date column (default 'week')
+        test_cutoff: Boundary where test >= cutoff (default '2024-01-01')
+        n_trials: Number of Optuna trials
+        random_state: Random seed
 
-#     Returns:
-#         Dict with best_params and best_score
-#     """
-#     print(f"Tuning forecast model with {n_trials} trials...")
+    Returns:
+        Dict with best_params and best_score
+    """
+    print(f"Tuning forecast model with {n_trials} trials...")
+    
+    # Sort by date ascending
+    df = df_input.sort_values(by=date_column).reset_index(drop=True)
+    df = create_horizon_targets(df, [horizon])
+    target_col = f"y_h{horizon}"
 
-#     def objective(trial):
-#         params = {
-#             'objective': 'poisson',
-#             'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-#             'num_leaves': trial.suggest_int('num_leaves', 20, 100),
-#             'max_depth': trial.suggest_int('max_depth', 3, 10),
-#             'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
-#             'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-#             'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-#             'n_estimators': 500,
-#             'random_state': random_state,
-#             'verbose': -1
-#         }
+    # Build features/target
+    feature_list = numerical_columns + categorical_columns
+    X = df[input_columns].copy()
+    y = df[target_col].copy()
 
-#         model = lgb.LGBMRegressor(**params)
+    print("X shape pre-filtering:", X.shape)
+    X, y = filter_data(X, y)
 
-#         if cat_cols:
-#             model.fit(X_train, y_train, categorical_feature=cat_cols)
-#         else:
-#             model.fit(X_train, y_train)
+    # Enforce datetime
+    X[date_column] = pd.to_datetime(X[date_column])
 
-#         y_pred = model.predict(X_val)
+    # Fixed cutoff split: test is test_cutoff onwards
+    X_train, X_test, y_train, y_test = split_train_test_by_cutoff(
+        X, y, date_column=date_column, cutoff=test_cutoff
+    )
 
-#         # Poisson deviance (lower is better)
-#         epsilon = 1e-10
-#         poisson_dev = 2 * np.mean(
-#             y_val * np.log((y_val + epsilon) / (y_pred + epsilon)) - (y_val - y_pred)
-#         )
+    print(
+        f"Train dates [{X_train[date_column].min()} to {X_train[date_column].max()}], "
+        f"Test dates [{X_test[date_column].min()} to {X_test[date_column].max()}]"
+    )
+    print("X training shape:", X_train.shape)
+    print("X test shape:", X_test.shape)
 
-#         return poisson_dev
+    # Preprocessor: OHE for categoricals; pass-through numerics
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "one_hot_encoder",
+                OneHotEncoder(handle_unknown="ignore", drop="first"),
+                categorical_columns,
+            ),
+        ],
+        remainder="passthrough",  # keep numeric columns
+    )
 
-#     study = optuna.create_study(
-#         direction='minimize',
-#         sampler=TPESampler(seed=random_state)
-#     )
+    def objective(trial):
+        params = {
+            'objective': 'poisson',
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
+            'num_leaves': trial.suggest_int('num_leaves', 50, 80),
+            'max_depth': trial.suggest_int('max_depth', 6, 8),
+            'min_child_samples': trial.suggest_int('min_child_samples', 20, 50),
+            'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+            'n_estimators': 500,
+            'random_state': random_state,
+            'verbose': -1
+        }
 
-#     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        regressor = LGBMRegressor(**params)
+        
+        # Build pipeline
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "select_features",
+                    FunctionTransformer(select_features, kw_args={"feature_list": feature_list}),
+                ),
+                ("preprocessor", preprocessor),
+                ("regressor", regressor),
+            ]
+        )
 
-#     print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
-#     print(f"✓ Best params: {study.best_params}")
+        # Fit on train
+        pipeline.fit(X_train, y_train)
 
-#     return {
-#         'best_params': study.best_params,
-#         'best_score': study.best_value,
-#         # 'study': study
-#     }
+        # Predict on test
+        y_pred = pipeline.predict(X_test)
+
+        # Poisson deviance (lower is better)
+        epsilon = 1e-10
+        poisson_dev = 2 * np.mean(
+            y_test * np.log((y_test + epsilon) / (y_pred + epsilon)) - (y_test - y_pred)
+        )
+
+        return poisson_dev
+
+    study = optuna.create_study(
+        direction='minimize',
+        sampler=TPESampler(seed=random_state)
+    )
+
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+    print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
+    print(f"✓ Best params: {study.best_params}")
+
+    return {
+        'best_params': study.best_params,
+        'best_score': study.best_value,
+        # 'study': study
+    }
 
 
 def eval_forecast(
