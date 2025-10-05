@@ -102,7 +102,7 @@ def filter_data(X, y):
     """
     nan_mask = pd.isnull(X).any(axis=1)
     X_transformed = X[~nan_mask]
-    y_transformed = y.loc[X_transformed.index]  # Use .loc with actual indices
+    y_transformed = y[~nan_mask]  # Use .loc with actual indices
     print("X shape post-filtering:", X_transformed.shape)
     return X_transformed, y_transformed
 
@@ -469,16 +469,17 @@ def tune(
     date_column: str = "week",
     test_cutoff: str = "2024-01-01",
     n_trials: int = 30,
-    random_state: int = 42
+    random_state: int = 42,
+    alpha: Optional[float] = None,
 ) -> Dict:
     """
     Tune LightGBM forecast model using Optuna.
-    Optimizes Poisson deviance on test set.
+    Supports both Poisson (mean) and quantile regression.
     Uses same pipeline structure as fit_pipeline with OHE.
 
     Args:
         df_input: Input DataFrame
-        target_column: Target column name
+        horizon: Forecast horizon (weeks)
         input_columns: List of columns to use as model inputs
         numerical_columns: List of numeric columns (passed through)
         categorical_columns: List of categorical columns (one-hot encoded)
@@ -486,15 +487,17 @@ def tune(
         test_cutoff: Boundary where test >= cutoff (default '2024-01-01')
         n_trials: Number of Optuna trials
         random_state: Random seed
+        alpha: Quantile to predict (0.1 for 10th percentile, 0.5 for median, 0.9 for 90th).
+               If None, uses Poisson objective for mean prediction.
 
     Returns:
-        Dict with best_params and best_score
+        Dict with best_params, best_score, and alpha
     """
-    print(f"Tuning forecast model with {n_trials} trials...")
-    
-    # Sort by date ascending
-    df = df_input.sort_values(by=date_column).reset_index(drop=True)
-    df = create_horizon_targets(df, [horizon])
+    objective_name = f"quantile (α={alpha})" if alpha is not None else "poisson (mean)"
+    print(f"Tuning forecast model for {objective_name} with {n_trials} trials...")
+
+    df = create_horizon_targets(df_input, [horizon])
+    df = df.sort_values(by=date_column).reset_index(drop=True)
     target_col = f"y_h{horizon}"
 
     # Build features/target
@@ -522,7 +525,6 @@ def tune(
 
     def objective(trial):
         params = {
-            'objective': 'poisson',
             'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
             'num_leaves': trial.suggest_int('num_leaves', 50, 80),
             'max_depth': trial.suggest_int('max_depth', 6, 8),
@@ -533,6 +535,13 @@ def tune(
             'random_state': random_state,
             'verbose': -1
         }
+        
+        # Set objective based on alpha
+        if alpha is not None:
+            params['objective'] = 'quantile'
+            params['alpha'] = alpha
+        else:
+            params['objective'] = 'poisson'
 
         regressor = LGBMRegressor(**params)
         
@@ -566,13 +575,19 @@ def tune(
         # Predict on test
         y_pred = pipeline.predict(X_test)
 
-        # Poisson deviance (lower is better)
-        epsilon = 1e-10
-        poisson_dev = 2 * np.mean(
-            y_test * np.log((y_test + epsilon) / (y_pred + epsilon)) - (y_test - y_pred)
-        )
+        # Choose evaluation metric based on objective
+        if alpha is not None:
+            # Pinball loss (quantile loss) - lower is better
+            errors = y_test - y_pred
+            loss = np.mean(np.maximum(alpha * errors, (alpha - 1) * errors))
+        else:
+            # Poisson deviance (lower is better)
+            epsilon = 1e-10
+            loss = 2 * np.mean(
+                y_test * np.log((y_test + epsilon) / (y_pred + epsilon)) - (y_test - y_pred)
+            )
 
-        return poisson_dev
+        return loss
 
     study = optuna.create_study(
         direction='minimize',
@@ -581,12 +596,14 @@ def tune(
 
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
-    print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
+    metric_name = "Pinball loss" if alpha is not None else "Poisson deviance"
+    print(f"✓ Best {metric_name}: {study.best_value:.4f}")
     print(f"✓ Best params: {study.best_params}")
 
     return {
         'best_params': study.best_params,
         'best_score': study.best_value,
+        'alpha': alpha,
         # 'study': study
     }
 
