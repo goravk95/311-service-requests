@@ -11,17 +11,11 @@ from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from .utils import (
-    validate_lat_lon,
-    lat_lon_to_h3,
     expand_k_ring,
-    compute_rolling_as_of,
-    compute_lag_features,
-    compute_days_since_last,
+    add_history_features,
     make_descriptor_tfidf,
     merge_asof_by_group,
-    compute_time_based_rolling_counts,
-    add_weather_derived_features,
-    compute_rain_rolling
+    compute_time_based_rolling_counts
 )
 
 
@@ -42,14 +36,11 @@ def add_h3_keys(df: pd.DataFrame,
         DataFrame with added columns: hex, day, dow, hour, month
     """
     result = df.copy()
-    
-    # Convert lat/lon to H3
+
     result['hex'] = result.apply(
-        lambda row: lat_lon_to_h3(row[lat], row[lon], resolution=res),
+        lambda row: h3.latlng_to_cell(row[lat], row[lon], res),
         axis=1
     )
-    
-    # Add temporal features
     result['day'] = result['created_date'].dt.floor('D')
     result['dow'] = result['created_date'].dt.dayofweek
     result['hour'] = result['created_date'].dt.hour
@@ -59,7 +50,6 @@ def add_h3_keys(df: pd.DataFrame,
 
 
 def build_forecast_panel(df: pd.DataFrame, 
-                        weather_df: Optional[pd.DataFrame] = None,
                         use_population_offset: bool = True) -> pd.DataFrame:
     """
     Build sparse forecast panel with time-series features.
@@ -67,9 +57,12 @@ def build_forecast_panel(df: pd.DataFrame,
     Grain: one row per (hex, complaint_family, day) with target y = count(tickets).
     Includes lag/rolling features, neighbor aggregates, weather, and population.
     
+    Weather features (tavg, tmax, tmin, prcp, heating_degree, cooling_degree,
+    rain_3d, rain_7d, heat_flag, freeze_flag) should already be present in df
+    from preprocessing (via preprocess_and_merge_external_data).
+    
     Args:
-        df: Input DataFrame with H3 keys already added
-        weather_df: Optional weather DataFrame with columns [day, fips, tmax, tmin, tavg, prcp]
+        df: Input DataFrame with H3 keys and weather features already added
         use_population_offset: Whether to include population features
     
     Returns:
@@ -89,30 +82,15 @@ def build_forecast_panel(df: pd.DataFrame,
     # Add calendar features
     panel['dow'] = panel['day'].dt.dayofweek
     panel['month'] = panel['day'].dt.month
-    
-    # Compute per-group history features
-    def add_history_features(group):
-        # Sort by date
-        group = group.sort_values('day')
-        
-        # Lag features
-        group = compute_lag_features(group, date_col='day', value_col='y', lags=[1, 7])
-        
-        # Rolling features
-        group = compute_rolling_as_of(group, date_col='day', value_col='y', windows=[7, 14, 28])
-        
-        # Momentum
-        group['momentum'] = group['roll7'] / (group['roll28'] + 1e-6)
-        
-        # Days since last
-        group = compute_days_since_last(group, date_col='day')
-        
-        return group
-    
-    panel = panel.groupby(['hex', 'complaint_family'], group_keys=False).apply(add_history_features)
-    
-    # Add neighbor features (k=1 ring)
-    # Note: This can be expensive for large panels; include scaffolding
+
+    panel = panel.sort_values('day')
+
+    panel = panel.groupby(['hex', 'complaint_family'], group_keys=False).apply(
+        lambda group: add_history_features(group, date_col='day', value_col='y', lags=[1, 7], windows=[7, 28])
+    )
+    panel['momentum'] = panel['roll7'] / (panel['roll28'] + 1e-6)
+
+    print("k_ring...")
     try:
         panel = expand_k_ring(panel, k=1, hex_col='hex', agg_cols=['roll7', 'roll28'])
     except Exception as e:
@@ -120,80 +98,44 @@ def build_forecast_panel(df: pd.DataFrame,
         panel['nbr_roll7'] = 0.0
         panel['nbr_roll28'] = 0.0
     
-    # Merge weather data
-    if weather_df is not None and len(weather_df) > 0:
-        # Ensure weather has day column
-        weather = weather_df.copy()
-        if 'day' not in weather.columns and 'date' in weather.columns:
-            weather['day'] = pd.to_datetime(weather['date'])
-        
-        # Add derived weather features
-        weather = add_weather_derived_features(weather)
-        
-        # Compute rolling rain by fips
-        if 'fips' in weather.columns and 'prcp' in weather.columns:
-            weather = compute_rain_rolling(
-                weather, 
-                group_col='fips', 
-                date_col='day', 
-                prcp_col='prcp',
-                windows=[3, 7]
-            )
-        
-        # Join panel with weather (need fips mapping)
-        # If df has fips, use it; otherwise try to get from original df
-        if 'fips' in df_valid.columns:
-            hex_fips_map = df_valid[['hex', 'fips']].drop_duplicates().dropna()
-            panel = panel.merge(hex_fips_map, on='hex', how='left')
-            
-            # Merge weather by day and fips
-            weather_cols = ['day', 'fips', 'tavg', 'tmax', 'tmin', 'prcp', 
-                          'heating_degree', 'cooling_degree', 'rain_3d', 'rain_7d']
-            weather_cols = [c for c in weather_cols if c in weather.columns]
-            
-            panel = panel.merge(
-                weather[weather_cols],
-                on=['day', 'fips'],
-                how='left'
-            )
+    # Aggregate weather features from df to panel level
+    # Weather features are already present from preprocessing
+    weather_cols = ['tavg', 'tmax', 'tmin', 'prcp', 'heating_degree', 
+                   'cooling_degree', 'rain_3d', 'rain_7d']
     
-    # Fill missing weather columns with 0
-    weather_features = ['tavg', 'tmax', 'tmin', 'prcp', 'heating_degree', 
-                       'cooling_degree', 'rain_3d', 'rain_7d']
-    for col in weather_features:
-        if col not in panel.columns:
-            panel[col] = 0.0
-        else:
-            panel[col] = panel[col].fillna(0.0)
+    # Only aggregate weather columns that exist
+    weather_agg = {}
+    for col in weather_cols:
+        # Use mean for most weather features, sum for precipitation
+        weather_agg[col] = 'sum' if col == 'prcp' else 'mean'
     
-    # Add population features
-    if use_population_offset:
-        if 'population' in df_valid.columns and 'GEOID' in df_valid.columns:
-            # Get hex -> population mapping (approximate)
-            hex_pop_map = df_valid.groupby('hex')['population'].mean().reset_index()
-            hex_pop_map.columns = ['hex', 'pop_hex']
-            
-            panel = panel.merge(hex_pop_map, on='hex', how='left')
-            panel['pop_hex'] = panel['pop_hex'].fillna(0)
-        else:
-            panel['pop_hex'] = 0.0
+    weather_from_df = df_valid.groupby(['hex', 'complaint_family', 'day']).agg(weather_agg).reset_index()
+    
+    # Merge with panel
+    panel = panel.merge(
+        weather_from_df,
+        on=['hex', 'complaint_family', 'day'],
+        how='left'
+    )
+    
+    if 'population' in df_valid.columns and 'GEOID' in df_valid.columns:
+        # Get hex -> population mapping (approximate)
+        hex_pop_map = df_valid.groupby(['hex', 'GEOID'])['population'].first().reset_index()
+        hex_pop_map = hex_pop_map.groupby('hex')['population'].sum().reset_index()
+        hex_pop_map.columns = ['hex', 'pop_hex']
         
-        panel['log_pop'] = np.log(np.maximum(panel['pop_hex'], 1))
+        panel = panel.merge(hex_pop_map, on='hex', how='left')
+        panel['pop_hex'] = panel['pop_hex'].fillna(0)
     else:
         panel['pop_hex'] = 0.0
-        panel['log_pop'] = 0.0
+    
+    panel['log_pop'] = np.log(np.maximum(panel['pop_hex'], 1))
     
     # Ensure all expected columns exist
     expected_cols = ['hex', 'complaint_family', 'day', 'y', 'dow', 'month',
                     'lag1', 'lag7', 'roll7', 'roll14', 'roll28', 'momentum',
                     'days_since_last', 'tavg', 'prcp', 'heating_degree',
                     'cooling_degree', 'rain_3d', 'rain_7d', 'log_pop']
-    
-    for col in expected_cols:
-        if col not in panel.columns:
-            if col in ['hex', 'complaint_family', 'day']:
-                continue  # Should already exist
-            panel[col] = 0.0
     
     # Select final columns
     final_cols = [c for c in expected_cols if c in panel.columns]
@@ -210,19 +152,19 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     Grain: one row per ticket at creation time (no leakage).
     Includes categorical one-hots, temporal features, local history, and TF-IDF text features.
     
+    Weather features should already be present in df from preprocessing
+    (via preprocess_and_merge_external_data).
+    
     Args:
-        df: Input DataFrame with H3 keys and temporal features added
+        df: Input DataFrame with H3 keys, temporal features, and weather features added
     
     Returns:
         Tuple of (feature DataFrame, TF-IDF sparse matrix, fitted vectorizer)
     """
     result = df.copy()
     
-    # Create unique key if not present
-    if 'unique_key' not in result.columns:
-        result['unique_key'] = result.index
+    result['unique_key'] = result.index
     
-    # Filter to valid tickets with creation date
     result = result[result['created_date'].notna()].copy()
     
     if len(result) == 0:
@@ -281,15 +223,15 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
         result['due_crosses_weekend'] = 0
     
     # === WEATHER AT CREATION ===
-    weather_features = ['tavg', 'tmax', 'tmin', 'prcp']
+    # Weather features are already present from preprocessing
+    # Fill any missing values with 0
+    weather_features = ['tavg', 'tmax', 'tmin', 'prcp', 
+                       'heating_degree', 'cooling_degree', 'heat_flag', 'freeze_flag']
     for col in weather_features:
         if col not in result.columns:
             result[col] = 0.0
         else:
             result[col] = result[col].fillna(0.0)
-    
-    # Add derived weather
-    result = add_weather_derived_features(result)
     
     # === LOCAL HISTORY (AS-OF) ===
     # Build a mini forecast panel for history lookup
@@ -381,22 +323,20 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     tfidf_matrix = None
     vectorizer = None
     
-    if 'descriptor_clean' in result.columns:
-        try:
-            tfidf_matrix, vectorizer = make_descriptor_tfidf(
-                result, 
-                col='descriptor_clean',
-                min_df=5,
-                ngram_range=(1, 2),
-                max_features=500
-            )
-        except Exception as e:
-            print(f"Warning: TF-IDF failed: {e}")
-            tfidf_matrix = None
-            vectorizer = None
+    try:
+        tfidf_matrix, vectorizer = make_descriptor_tfidf(
+            result, 
+            col='descriptor_clean',
+            min_df=5,
+            ngram_range=(1, 2),
+            max_features=500
+        )
+    except Exception as e:
+        print(f"Warning: TF-IDF failed: {e}")
+        tfidf_matrix = None
+        vectorizer = None
     
     # === SELECT FEATURE COLUMNS ===
-    # Numeric features
     numeric_features = [
         'hour', 'dow', 'month', 'is_created_at_midnight', 'is_weekend',
         'due_gap_hours', 'due_is_60d', 'due_crosses_weekend',
