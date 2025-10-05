@@ -144,8 +144,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     """
     result = df.copy()
     
-    result['unique_key'] = result.index
-    
     result = result[result['created_date'].notna()].copy()
     
     categorical_cols = ['complaint_family', 'open_data_channel_type', 'location_type',
@@ -194,7 +192,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     # Merge back to tickets using as-of join
     result = result.sort_values(['day', 'hex', 'complaint_family'])
     history_panel = history_panel.sort_values(['day', 'hex', 'complaint_family'])
-    print('merging history panel...')
     result = pd.merge_asof(
         result,
         history_panel[['hex', 'complaint_family', 'day', 'geo_family_roll7', 
@@ -204,7 +201,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
         direction='backward'
     )
     
-    print('filling missing history features...')
     for col in ['geo_family_roll7', 'geo_family_roll28', 'days_since_last_geo_family']:
         if col not in result.columns:
             result[col] = 0.0
@@ -213,7 +209,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     
     result['site_key'] = result['bbl'].fillna('unknown')
 
-    print('computing site repeat counts...')
     site_panel = result.groupby(['site_key', 'day']).size().reset_index(name='daily_site_count')
     
     # Compute rolling features per site
@@ -233,7 +228,6 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     # Merge back to tickets using as-of join
     result = result.sort_values(['day', 'site_key'])
     site_panel = site_panel.sort_values(['day', 'site_key'])
-    print('merging site history panel...')
     result = pd.merge_asof(
         result,
         site_panel[['site_key', 'day', 'repeat_site_14d', 'repeat_site_28d']],
@@ -306,15 +300,6 @@ def build_duration_survival_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     result = df.copy()
     
-    # Create unique key if not present
-    if 'unique_key' not in result.columns:
-        result['unique_key'] = result.index
-    
-    # Ensure dates are datetime
-    result['created_date'] = pd.to_datetime(result['created_date'], errors='coerce')
-    result['closed_date'] = pd.to_datetime(result['closed_date'], errors='coerce')
-    
-    # Compute duration in days
     result['duration_days'] = (
         (result['closed_date'] - result['created_date']).dt.total_seconds() / 86400
     )
@@ -361,7 +346,7 @@ def build_duration_survival_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_duration_features(df: pd.DataFrame, 
-                           panel: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                           triage_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
     Build features for duration prediction (combines triage + queue pressure).
     
@@ -373,7 +358,8 @@ def build_duration_features(df: pd.DataFrame,
         DataFrame with duration features keyed by unique_key
     """
     # Start with triage features
-    triage_features, _, _ = build_triage_features(df)
+    if triage_features is None:
+        triage_features, _, _ = build_triage_features(df)
     
     result = df.copy()
     
