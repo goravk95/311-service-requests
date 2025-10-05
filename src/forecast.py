@@ -3,6 +3,7 @@ Forecast Model: Multi-horizon time-series prediction using LightGBM with Poisson
 Trains separate models per complaint_family and per horizon (1-7 days).
 """
 
+import json
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
@@ -13,6 +14,7 @@ import optuna
 from optuna.samplers import TPESampler
 from typing import Dict, Optional
 import warnings
+from matplotlib import pyplot as plt
 
 warnings.filterwarnings('ignore')
 
@@ -525,7 +527,7 @@ def plot_forecast_calibration(
         plt.show()
     
     plt.close()
-    
+
 
 def save_metrics(metrics: Dict, output_path: Path) -> None:
     """
