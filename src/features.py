@@ -11,7 +11,7 @@ from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from .utils import (
-    expand_k_ring,
+    aggregate_on_parent,
     add_history_features,
     make_descriptor_tfidf,
     merge_asof_by_group,
@@ -90,16 +90,8 @@ def build_forecast_panel(df: pd.DataFrame,
     )
     panel['momentum'] = panel['roll7'] / (panel['roll28'] + 1e-6)
 
-    print("k_ring...")
-    try:
-        panel = expand_k_ring(panel, k=1, hex_col='hex', agg_cols=['roll7', 'roll28'])
-    except Exception as e:
-        # If neighbor expansion fails, add zero columns
-        panel['nbr_roll7'] = 0.0
-        panel['nbr_roll28'] = 0.0
+    panel = aggregate_on_parent(panel, res=7, hex_col='hex', agg_cols=['roll7', 'roll28'])
     
-    # Aggregate weather features from df to panel level
-    # Weather features are already present from preprocessing
     weather_cols = ['tavg', 'tmax', 'tmin', 'prcp', 'heating_degree', 
                    'cooling_degree', 'rain_3d', 'rain_7d']
     

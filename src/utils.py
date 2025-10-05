@@ -11,30 +11,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse import csr_matrix
 
 
-def get_h3_neighbors(hex_id: str, k: int = 1) -> List[str]:
-    """
-    Get k-ring neighbors of an H3 hex.
-    
-    Args:
-        hex_id: H3 hex ID
-        k: Ring distance (default 1)
-    
-    Returns:
-        List of neighbor hex IDs (excluding center)
-    """
-    try:
-        neighbors = h3.k_ring(hex_id, k)
-        return [h for h in neighbors if h != hex_id]
-    except:
-        return []
-
-
-def expand_k_ring(df_panel: pd.DataFrame, k: int = 1, 
+def aggregate_on_parent(df_panel: pd.DataFrame, res: int = 7, 
                   hex_col: str = 'hex', 
                   agg_cols: List[str] = ['roll7', 'roll28']) -> pd.DataFrame:
     """
     Expand a panel to include neighbor aggregations.
     For each hex, compute neighbor sums of specified columns.
+    
+    Optimized vectorized implementation - avoids O(N²) row-by-row iteration.
     
     Args:
         df_panel: DataFrame with hex column and metrics
@@ -45,50 +29,11 @@ def expand_k_ring(df_panel: pd.DataFrame, k: int = 1,
     Returns:
         DataFrame with original data plus neighbor aggregates (prefixed with 'nbr_')
     """
-    # Get unique hexes
-    unique_hexes = df_panel[hex_col].dropna().unique()
-    
-    # Build neighbor mapping
-    neighbor_map = {}
-    for hex_id in unique_hexes:
-        neighbors = get_h3_neighbors(hex_id, k=k)
-        neighbor_map[hex_id] = neighbors
-    
-    # For each row, compute neighbor aggregates
-    neighbor_features = {}
+    df_panel[f'hex_{res}'] = df_panel[hex_col].apply(lambda x: h3.cell_to_parent(x, res))
     for col in agg_cols:
-        neighbor_features[f'nbr_{col}'] = []
-    
-    for idx, row in df_panel.iterrows():
-        hex_id = row[hex_col]
-        if pd.isna(hex_id) or hex_id not in neighbor_map:
-            for col in agg_cols:
-                neighbor_features[f'nbr_{col}'].append(0.0)
-            continue
-        
-        neighbors = neighbor_map[hex_id]
-        
-        # Filter panel to same day, complaint_family, and neighbor hexes
-        filter_mask = (df_panel[hex_col].isin(neighbors))
-        if 'day' in df_panel.columns:
-            filter_mask &= (df_panel['day'] == row['day'])
-        if 'complaint_family' in df_panel.columns:
-            filter_mask &= (df_panel['complaint_family'] == row['complaint_family'])
-        
-        neighbor_data = df_panel[filter_mask]
-        
-        for col in agg_cols:
-            if len(neighbor_data) > 0:
-                neighbor_features[f'nbr_{col}'].append(neighbor_data[col].sum())
-            else:
-                neighbor_features[f'nbr_{col}'].append(0.0)
-    
-    # Add neighbor features to original dataframe
-    result = df_panel.copy()
-    for col, values in neighbor_features.items():
-        result[col] = values
-    
-    return result
+        df_panel[f'nbr_{col}'] = df_panel.groupby(['day', 'complaint_family', f'hex_{res}'])[col].transform('sum')
+    return df_panel
+
 
 
 def add_history_features(group_df: pd.DataFrame,
