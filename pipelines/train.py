@@ -26,18 +26,16 @@ def train_forecast_task(
     df: pd.DataFrame,
     output_dir: Path,
     families: list = None,
-    do_tune: bool = False,
-    weather_df: pd.DataFrame = None
+    do_tune: bool = False
 ):
     """
     Train forecast models.
     
     Args:
-        df: Input DataFrame
+        df: Input DataFrame with weather features already present
         output_dir: Output directory for models
         families: List of families to train (all if None)
         do_tune: Whether to run hyperparameter tuning
-        weather_df: Weather DataFrame
     """
     print("\n" + "="*60)
     print("TRAINING FORECAST MODELS")
@@ -45,7 +43,7 @@ def train_forecast_task(
     
     # Build forecast panel
     print("\nBuilding forecast panel...")
-    panel = build_forecast_panel(df, weather_df=weather_df, use_population_offset=True)
+    panel = build_forecast_panel(df, use_population_offset=True)
     
     if len(panel) == 0:
         print("Error: Empty forecast panel")
@@ -328,8 +326,6 @@ def main():
                        help='Comma-separated list of complaint families (forecast only)')
     parser.add_argument('--tune', action='store_true',
                        help='Run hyperparameter tuning')
-    parser.add_argument('--weather_parquet', type=str, default=None,
-                       help='Path to weather parquet/csv (forecast only)')
     parser.add_argument('--target_col', type=str, default='potential_inspection_trigger',
                        help='Target column name (triage only)')
     
@@ -357,16 +353,6 @@ def main():
         print("Adding H3 keys...")
         df = add_h3_keys(df)
     
-    # Load weather if provided
-    weather_df = None
-    if args.weather_parquet:
-        print(f"Loading weather data from {args.weather_parquet}...")
-        if args.weather_parquet.endswith('.csv'):
-            weather_df = pd.read_csv(args.weather_parquet)
-        else:
-            weather_df = pd.read_parquet(args.weather_parquet)
-        print(f"✓ Loaded {len(weather_df):,} weather records")
-    
     # Parse families
     families = None
     if args.families:
@@ -376,7 +362,7 @@ def main():
     # Train
     if args.task == 'forecast':
         train_forecast_task(df, output_dir, families=families, 
-                          do_tune=args.tune, weather_df=weather_df)
+                          do_tune=args.tune)
     
     elif args.task == 'triage':
         train_triage_task(df, output_dir, target_col=args.target_col, 

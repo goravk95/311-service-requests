@@ -6,7 +6,20 @@ Specifically, we focus on service requests tied to the **DOHMH (Department of He
 
 - **Interesting issues:** The DOHMH dataset contains specific issues that are intriguing to explore.
 - **Data size:** The full service requests dataset contains 41M rows. Some agencies have millions of requests, which would make data wrangling and exploration cumbersome. Additionally, working with a larger dataset would make it harder to ingest new data since the existing dataset already consumes significant memory. DOHMH has over 1M rows, which is large but manageable without needing big data tools.
-- **Personal interest:** Many DOHMH requests are health-related. Out of curiosity, I wanted to explore whether the data aligns with locations I’ve been to.
+- **Personal interest:** Many DOHMH requests are health-related. Out of curiosity, I wanted to explore whether the data aligns with locations I've been to.
+
+## 📚 Documentation
+
+**New to the project?** Start with the [Quick Start Guide](docs/QUICK_START.md)
+
+| Document | Description |
+|----------|-------------|
+| **[Quick Start](docs/QUICK_START.md)** | Get started in 5 minutes |
+| **[Feature Engineering](docs/FEATURES.md)** | Complete feature engineering guide |
+| **[Model Training](docs/TRAINING.md)** | Model training and deployment |
+| **[API Reference](docs/API_REFERENCE.md)** | Full API documentation |
+
+## 🎯 Project Goals
 
 The code in this repository is written to answer the question:
 
@@ -16,11 +29,11 @@ To address this, the repository creates a dashboard to visualize and analyze ser
 
 The main driver behind this product is **three types of predictive models**:
 
-1. **Request Forecasting:** Predicts the number of new requests expected in a given week.
-2. **Request Severity:** Predicts, for each ticket, the likelihood that it will lead to:
+1. **Forecast Model:** Predicts the number of new requests expected in a given week by location and type.
+2. **Triage Model:** Predicts, for each ticket, the likelihood that it will lead to:
    - **Inspection:** Whether the resolution requires an inspection.
    - **SLA breach:** Whether the ticket will exceed its due date.
-3. **Request Duration:** Estimates how long it will take for a ticket to be closed.
+3. **Duration Model:** Estimates how long it will take for a ticket to be closed (with censoring).
 
 Using these models, we can determine:
 

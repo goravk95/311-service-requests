@@ -124,6 +124,7 @@ def compute_time_based_rolling_counts(df: pd.DataFrame,
                                       window_hours: List[int]) -> pd.DataFrame:
     """
     Compute rolling counts based on time windows (for intake pressure features).
+    Vectorized using searchsorted for O(n log n) complexity per group.
     
     Args:
         df: DataFrame with timestamps
@@ -139,17 +140,19 @@ def compute_time_based_rolling_counts(df: pd.DataFrame,
     for window in window_hours:
         col_name = f'intake_{window}h'
         
-        # For each group, compute rolling count
+        # Vectorized rolling count using searchsorted
         def rolling_count(group):
-            counts = []
-            for idx, row in group.iterrows():
-                current_time = row[timestamp_col]
-                cutoff_time = current_time - pd.Timedelta(hours=window)
-                
-                # Count rows in window
-                mask = (group[timestamp_col] >= cutoff_time) & \
-                       (group[timestamp_col] < current_time)
-                counts.append(mask.sum())
+            timestamps = group[timestamp_col].values
+            timestamps_int = timestamps.astype('datetime64[ns]').astype(np.int64)
+            
+            window_ns = pd.Timedelta(hours=window).value  # in nanoseconds
+            counts = np.zeros(len(timestamps), dtype=np.int32)
+            
+            for i in range(len(timestamps)):
+                current_time = timestamps_int[i]
+                # Find first index >= (current_time - window)
+                start_idx = np.searchsorted(timestamps_int[:i], current_time - window_ns, side='left')
+                counts[i] = i - start_idx
             
             group[col_name] = counts
             return group

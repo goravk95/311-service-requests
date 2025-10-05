@@ -346,7 +346,7 @@ def build_duration_survival_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_duration_features(df: pd.DataFrame, 
-                           triage_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                           triage_features: pd.DataFrame) -> pd.DataFrame:
     """
     Build features for duration prediction (combines triage + queue pressure).
     
@@ -357,70 +357,25 @@ def build_duration_features(df: pd.DataFrame,
     Returns:
         DataFrame with duration features keyed by unique_key
     """
-    # Start with triage features
-    if triage_features is None:
-        triage_features, _, _ = build_triage_features(df)
-    
     result = df.copy()
-    
-    # Create unique key if not present
-    if 'unique_key' not in result.columns:
-        result['unique_key'] = result.index
     
     # === INTAKE PRESSURE FEATURES ===
     # Compute rolling intake counts in same region+family
-    if 'fips' in result.columns and 'complaint_family' in result.columns:
-        result = compute_time_based_rolling_counts(
-            result,
-            timestamp_col='created_date',
-            group_cols=['fips', 'complaint_family'],
-            window_hours=[6, 24]
-        )
-    else:
-        result['intake_6h'] = 0
-        result['intake_24h'] = 0
+    result = compute_time_based_rolling_counts(
+        result,
+        timestamp_col='created_date',
+        group_cols=['fips', 'complaint_family'],
+        window_hours=[6, 24]
+    )
     
     # === OPEN BACKLOG PROXY ===
     # Approximate open items in same hex+family
-    if 'hex' in result.columns and 'complaint_family' in result.columns:
-        # Count tickets created in last 7 days (proxy for open queue)
-        result = result.sort_values(['hex', 'complaint_family', 'created_date'])
-        
-        def compute_open_proxy(group):
-            open_7d = []
-            
-            for idx, row in group.iterrows():
-                current_time = row['created_date']
-                cutoff_time = current_time - pd.Timedelta(days=7)
-                
-                # Count tickets in window
-                mask = (group['created_date'] >= cutoff_time) & \
-                       (group['created_date'] < current_time)
-                open_7d.append(mask.sum())
-            
-            group['open_7d_geo_family'] = open_7d
-            return group
-        
-        result = result.groupby(['hex', 'complaint_family'], group_keys=False).apply(compute_open_proxy)
-    else:
-        result['open_7d_geo_family'] = 0
+    # Reuse the geo_family_roll7 we already computed, subtract 1 to exclude current ticket
+    result['open_7d_geo_family'] = (result['geo_family_roll7'] - 1).clip(lower=0)
     
-    # === DUE DATE FEATURES (already in triage) ===
-    # Ensure these exist
-    for col in ['due_gap_hours', 'due_is_60d', 'due_crosses_weekend']:
-        if col not in result.columns:
-            result[col] = 0
-    
-    # === COMBINE WITH TRIAGE FEATURES ===
     queue_features = result[['unique_key', 'intake_6h', 'intake_24h', 'open_7d_geo_family']].copy()
     
-    # Merge with triage features
     final_features = triage_features.merge(queue_features, on='unique_key', how='left')
-    
-    # Fill missing
-    for col in ['intake_6h', 'intake_24h', 'open_7d_geo_family']:
-        if col in final_features.columns:
-            final_features[col] = final_features[col].fillna(0)
     
     return final_features
 
