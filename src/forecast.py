@@ -22,6 +22,7 @@ from sklearn.preprocessing import FunctionTransformer
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from lightgbm import LGBMRegressor
+from scipy import stats
 
 warnings.filterwarnings("ignore")
 
@@ -235,8 +236,8 @@ def train_models(
     numerical_columns: list[str],
     categorical_columns: list[str],
     horizons: List[int] = list(range(1, 5)),
-    test_cutoff: str = "2025-01-01",
     params: Optional[Dict] = None,
+    test_cutoff: str = "2025-01-01"
 ) -> Dict:
     """
     Train multi-horizon forecast models for a single complaint family.
@@ -281,6 +282,7 @@ def train_models(
             numerical_columns,
             categorical_columns,
             test_cutoff = test_cutoff,
+            cv_splits = 5,
             cv_scoring="neg_mean_absolute_error",
         )
         full_fits[horizon] = {
@@ -301,10 +303,11 @@ def train_models(
             "train": eval_forecast(y_train, y_pred_train, horizon),
             "test": eval_forecast(y_test, y_pred_test, horizon),
         }
-
+        print('train metrics')
         print(
             f"  h={horizon}: RMSE={metrics[horizon]['train']['rmse']:.3f}, MAE={metrics[horizon]['train']['mae']:.3f}, Poisson Dev={metrics[horizon]['train']['poisson_deviance']:.3f}"
         )
+        print('test metrics')
         print(
             f"  h={horizon}: RMSE={metrics[horizon]['test']['rmse']:.3f}, MAE={metrics[horizon]['test']['mae']:.3f}, Poisson Dev={metrics[horizon]['test']['poisson_deviance']:.3f}"
         )
@@ -613,9 +616,11 @@ def evaluate_models(
     bundle: Dict,
 ) -> Dict:
     """
-    Evaluate models for a single complaint family.
+    Evaluate models with cross-validation scores, calibration plots, and residual analysis.
+    Includes normality tests and QQ plots for residuals.
     """
     for horizon in bundle["horizons"]:
+        # CV Scores Plot
         plt.plot(bundle["full_fits"][horizon]["cv_scores"])
         plt.axhline(np.mean(bundle["full_fits"][horizon]["cv_scores"]), linestyle = '--', c = '#000000')
         plt.title(f"CV Scores for Horizon {horizon}")
@@ -623,11 +628,80 @@ def evaluate_models(
         plt.ylabel("CV Score")
         plt.show()
 
+        # Get predictions
+        y_true_test = bundle["full_fits"][horizon]["y_test"]
         y_pred_test = bundle["full_fits"][horizon]["pipeline"].predict(bundle["full_fits"][horizon]["X_test"])
-        plot_forecast_calibration(bundle["full_fits"][horizon]["y_test"], y_pred_test, title=f"Forecast Calibration for Horizon {horizon}")
+        
+        # Forecast Calibration Plot
+        plot_forecast_calibration(y_true_test, y_pred_test, title=f"Forecast Calibration for Horizon {horizon}")
 
+        # Residual Analysis
+        residuals = y_true_test - y_pred_test
+        
+        # Create figure with 3 subplots for residual analysis
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        
+        # 1. Histogram of residuals with normal distribution overlay
+        axes[0].hist(residuals, bins=50, density=True, alpha=0.7, color='steelblue', edgecolor='black')
+        
+        # Overlay normal distribution
+        mu, std = residuals.mean(), residuals.std()
+        x = np.linspace(residuals.min(), residuals.max(), 100)
+        axes[0].plot(x, stats.norm.pdf(x, mu, std), 'r-', linewidth=2, label=f'Normal(μ={mu:.2f}, σ={std:.2f})')
+        axes[0].axvline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+        axes[0].set_xlabel('Residuals')
+        axes[0].set_ylabel('Density')
+        axes[0].set_title(f'Residual Distribution (Horizon {horizon})')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # 2. QQ Plot
+        stats.probplot(residuals, dist="norm", plot=axes[1])
+        axes[1].set_title(f'Q-Q Plot (Horizon {horizon})')
+        axes[1].grid(True, alpha=0.3)
+        
+        # 3. Residuals vs Fitted Values
+        axes[2].scatter(y_pred_test, residuals, alpha=0.3, s=10)
+        axes[2].axhline(0, color='red', linestyle='--', linewidth=2)
+        axes[2].set_xlabel('Fitted Values')
+        axes[2].set_ylabel('Residuals')
+        axes[2].set_title(f'Residuals vs Fitted (Horizon {horizon})')
+        axes[2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Statistical tests for normality
+        print(f"\n{'='*60}")
+        print(f"Horizon {horizon} - Residual Analysis")
+        print(f"{'='*60}")
+        print(f"Residual Statistics:")
+        print(f"  Mean: {mu:.4f}")
+        print(f"  Std Dev: {std:.4f}")
+        print(f"  Median: {np.median(residuals):.4f}")
+        print(f"  Skewness: {stats.skew(residuals):.4f}")
+        print(f"  Kurtosis: {stats.kurtosis(residuals):.4f}")
+        
+        # Shapiro-Wilk test for normality (sample up to 5000 points for efficiency)
+        sample_size = min(5000, len(residuals))
+        residuals_sample = np.random.choice(residuals, size=sample_size, replace=False) if len(residuals) > sample_size else residuals
+        shapiro_stat, shapiro_p = stats.shapiro(residuals_sample)
+        print(f"\nShapiro-Wilk Normality Test (n={len(residuals_sample)}):")
+        print(f"  Statistic: {shapiro_stat:.4f}")
+        print(f"  P-value: {shapiro_p:.4e}")
+        print(f"  Interpretation: {'Residuals are normally distributed (α=0.05)' if shapiro_p > 0.05 else 'Residuals are NOT normally distributed (α=0.05)'}")
+        
+        # Anderson-Darling test
+        anderson_result = stats.anderson(residuals, dist='norm')
+        print(f"\nAnderson-Darling Normality Test:")
+        print(f"  Statistic: {anderson_result.statistic:.4f}")
+        print(f"  Critical Values: {anderson_result.critical_values}")
+        print(f"  Significance Levels: {anderson_result.significance_level}%")
+        
+        print(f"\n{'-'*60}")
+        print("Model Performance Metrics:")
         print(bundle["metrics"][horizon])
-        print(f"--------------------------------" * 3)
+        print(f"{'='*60}\n")
 
 
 def save_metrics(metrics: Dict, output_path: Path) -> None:
