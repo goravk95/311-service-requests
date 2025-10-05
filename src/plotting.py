@@ -11,11 +11,19 @@ import contextily as cx
 import numpy as np
 
 
-def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geographic Density Map", 
-                             gridsize=90, cmap="Reds", figsize=(12, 12)):
+def create_hexbin_density_map(
+    df,
+    lat_col,
+    lon_col,
+    value_col=None,
+    title="Geographic Density Map",
+    gridsize=90,
+    cmap="Reds",
+    figsize=(12, 12),
+):
     """
     Create a hexbin density map for geographic data with NYC borough context.
-    
+
     Parameters:
     -----------
     df : pandas.DataFrame
@@ -34,21 +42,29 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
         Colormap name
     figsize : tuple
         Figure size (width, height)
-    
+
     Returns:
     --------
     fig, ax : matplotlib figure and axes objects
     """
-    
+
     # -------------------
     # 1) Load & prep NYC boundaries (TIGER block groups -> filter -> dissolve to boroughs)
     # -------------------
-    bg_shapefile = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "tl_2022_36_bg"))
+    bg_shapefile = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "resources", "tl_2022_36_bg")
+    )
     gdf_bg = gpd.read_file(bg_shapefile)
 
     # Ensure we only take NY State (36) and NYC counties
     gdf_bg = gdf_bg[gdf_bg["STATEFP"] == "36"]
-    nyc_counties = {"005": "Bronx", "047": "Brooklyn", "061": "Manhattan", "081": "Queens", "085": "Staten Island"}
+    nyc_counties = {
+        "005": "Bronx",
+        "047": "Brooklyn",
+        "061": "Manhattan",
+        "081": "Queens",
+        "085": "Staten Island",
+    }
     gdf_nyc = gdf_bg[gdf_bg["COUNTYFP"].isin(nyc_counties.keys())].copy()
 
     # Dissolve block groups into one polygon per county for clean borders
@@ -84,14 +100,14 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
     xmin, ymin, xmax, ymax = gdf_boros_3857.total_bounds
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    
+
     # Add a Google Maps-style basemap with roads and labels (after setting extent)
     cx.add_basemap(ax, crs="EPSG:3857", source=cx.providers.CartoDB.Voyager)
 
     # Hexbin in projected meters
     x = gdf_pts_3857.geometry.x.values
     y = gdf_pts_3857.geometry.y.values
-    
+
     # Use values if provided, otherwise use count
     if value_col is not None and value_col in df_plot.columns:
         C = gdf_pts_3857[value_col].values
@@ -101,42 +117,46 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
         reduce_C_function = None
 
     hb = ax.hexbin(
-        x, y,
+        x,
+        y,
         C=C,
         reduce_C_function=reduce_C_function,
         gridsize=gridsize,
         extent=(xmin, xmax, ymin, ymax),
         cmap=cmap,
-        mincnt=1,               # show all bins including those with 0 count
-        linewidths=0
+        mincnt=1,  # show all bins including those with 0 count
+        linewidths=0,
     )
-    
+
     # Clip hexbin to NYC borough boundaries only
     # Convert the NYC polygon to a matplotlib Path and apply as clip
-    if nyc_union.geom_type == 'Polygon':
+    if nyc_union.geom_type == "Polygon":
         # Single polygon - use exterior coordinates
         clip_path = Path(list(nyc_union.exterior.coords))
     else:
         # MultiPolygon - create compound path from all polygon exteriors
-        clip_path = Path.make_compound_path(*[
-            Path(list(geom.exterior.coords)) for geom in nyc_union.geoms
-        ])
-    
-    clip_patch = PathPatch(clip_path, transform=ax.transData, facecolor='none', edgecolor='none')
+        clip_path = Path.make_compound_path(
+            *[Path(list(geom.exterior.coords)) for geom in nyc_union.geoms]
+        )
+
+    clip_patch = PathPatch(clip_path, transform=ax.transData, facecolor="none", edgecolor="none")
     ax.add_patch(clip_patch)
     hb.set_clip_path(clip_patch)
 
-
     # Borough labels at dissolved centroids
     label_gdf = gdf_boros_3857.copy()
-    label_gdf["centroid"] = label_gdf.geometry.representative_point()  # safer than centroid for oddly shaped polygons
+    label_gdf["centroid"] = (
+        label_gdf.geometry.representative_point()
+    )  # safer than centroid for oddly shaped polygons
     for _, r in label_gdf.iterrows():
         ax.annotate(
             r["borough"],
             xy=(r["centroid"].x, r["centroid"].y),
-            ha="center", va="center",
-            fontsize=8, fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.2", fc="lightblue", ec="none", alpha=0.6)
+            ha="center",
+            va="center",
+            fontsize=8,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="lightblue", ec="none", alpha=0.6),
         )
 
     # Colorbar with better label
@@ -152,4 +172,3 @@ def create_hexbin_density_map(df, lat_col, lon_col, value_col=None, title="Geogr
 
     plt.tight_layout()
     return fig, ax
-

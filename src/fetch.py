@@ -82,12 +82,12 @@ def _add_missing_schema_columns(df):
 
 def _process_dataframe(df, use_full_schema=True):
     """Process the DataFrame to match the schema.
-    
+
     Args:
         df (pd.DataFrame): The DataFrame to process.
         use_full_schema (bool): If True, add missing columns from schema and enforce full schema.
                                If False, only convert types for existing columns.
-    
+
     Returns:
         pd.DataFrame: Processed DataFrame.
     """
@@ -98,11 +98,7 @@ def _process_dataframe(df, use_full_schema=True):
 
 
 def _fetch_data_for_month(
-    year: int, 
-    month: int, 
-    save: bool = True,
-    columns: list = None,
-    additional_filter: str = None
+    year: int, month: int, save: bool = True, columns: list = None, additional_filter: str = None
 ):
     """Fetch and save 311 service request data for a specific month.
 
@@ -120,7 +116,7 @@ def _fetch_data_for_month(
         - Data is saved as Parquet files in year=YYYY/month=MM partition structure.
         - Empty results are logged but no file is created.
         - Memory is explicitly freed after processing each month.
-        
+
     Schema Behavior:
         - If columns=None: Uses config.SCHEMA (full schema), adds missing columns as NA
         - If columns specified: Infers schema from actual columns, no padding with NA values
@@ -144,17 +140,15 @@ def _fetch_data_for_month(
     where_clause = f"{config.DATE_COLUMN} >= '{start}' AND {config.DATE_COLUMN} < '{end}'"
     if additional_filter:
         where_clause = f"{where_clause} AND {additional_filter}"
-    
+
     print(f"Fetching {year}-{month:02d} ...")
 
     # client.get_all handles paging internally (blocking)
     # If columns are specified, pass them as select parameter
     if columns:
-        results = list(client.get_all(
-            config.DATASET_ID, 
-            where=where_clause,
-            select=",".join(columns)
-        ))
+        results = list(
+            client.get_all(config.DATASET_ID, where=where_clause, select=",".join(columns))
+        )
     else:
         results = list(client.get_all(config.DATASET_ID, where=where_clause))
 
@@ -170,7 +164,10 @@ def _fetch_data_for_month(
 
         if save:
             # Write to year/month partition
-            file_path = config.SERVICE_REQUESTS_DATA_PATH + f"/year={year}/month={month:02d}/part-0000.parquet"
+            file_path = (
+                config.SERVICE_REQUESTS_DATA_PATH
+                + f"/year={year}/month={month:02d}/part-0000.parquet"
+            )
             # Only enforce schema when using full schema, otherwise let pandas infer
             if use_full_schema:
                 df.to_parquet(file_path, index=False, schema=config.SCHEMA)
@@ -178,7 +175,9 @@ def _fetch_data_for_month(
                 df.to_parquet(file_path, index=False)
             print(f"Saved {file_path} ({len(df):,} rows, {len(df.columns)} columns)")
         else:
-            print(f"Fetched {year}-{month:02d} ({len(df):,} rows, {len(df.columns)} columns) - not saved")
+            print(
+                f"Fetched {year}-{month:02d} ({len(df):,} rows, {len(df.columns)} columns) - not saved"
+            )
 
         # Clean up memory
         del df
@@ -189,12 +188,12 @@ def _fetch_data_for_month(
 
 
 async def fetch_and_save_month(
-    year: int, 
-    month: int, 
-    sem: asyncio.Semaphore, 
+    year: int,
+    month: int,
+    sem: asyncio.Semaphore,
     save: bool = True,
     columns: list = None,
-    additional_filter: str = None
+    additional_filter: str = None,
 ):
     """Asynchronously fetch and save data for a specific month with concurrency control.
 
@@ -212,13 +211,13 @@ async def fetch_and_save_month(
     """
     async with sem:
         # Run the synchronous worker in a thread pool
-        await asyncio.to_thread(_fetch_data_for_month, year, month, save, columns, additional_filter)
+        await asyncio.to_thread(
+            _fetch_data_for_month, year, month, save, columns, additional_filter
+        )
 
 
 async def fetch_all_service_requests(
-    save: bool = True, 
-    columns: list = None,
-    additional_filter: str = None
+    save: bool = True, columns: list = None, additional_filter: str = None
 ):
     """Fetch all NYC 311 service request data across the configured date range.
 
@@ -240,7 +239,7 @@ async def fetch_all_service_requests(
         >>> from src import config
         >>> # Fetch all data
         >>> asyncio.run(fetch_all_service_requests())
-        >>> 
+        >>>
         >>> # Fetch only DOHMH data with selected columns
         >>> asyncio.run(fetch_all_service_requests(
         ...     columns=config.DOHMH_COLUMNS,
@@ -255,17 +254,15 @@ async def fetch_all_service_requests(
     years = range(config.DATA_START_YEAR, config.DATA_END_YEAR)
     months = range(1, 13)
     tasks = [
-        fetch_and_save_month(y, m, sem, save, columns, additional_filter) 
-        for y in years 
+        fetch_and_save_month(y, m, sem, save, columns, additional_filter)
+        for y in years
         for m in months
     ]
     await asyncio.gather(*tasks)
 
 
 async def fetch_current_month_service_requests(
-    save: bool = True,
-    columns: list = None,
-    additional_filter: str = None
+    save: bool = True, columns: list = None, additional_filter: str = None
 ):
     """Fetch and overwrite data for the current month only.
 
@@ -287,7 +284,7 @@ async def fetch_current_month_service_requests(
         >>> from src import config
         >>> # Fetch all current month data
         >>> asyncio.run(fetch_current_month_service_requests())
-        >>> 
+        >>>
         >>> # Fetch only DOHMH data for current month
         >>> asyncio.run(fetch_current_month_service_requests(
         ...     columns=config.DOHDMH_COLUMNS,
@@ -474,4 +471,3 @@ def fetch_noaa_weather_data(start_year: int = 2010, end_year: int = 2025, save: 
         print(f"Saved weather data to {output_path}")
 
     return df_weather
-

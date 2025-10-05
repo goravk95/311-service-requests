@@ -10,309 +10,390 @@ import lightgbm as lgb
 from typing import Dict, List, Tuple, Optional
 import joblib
 from pathlib import Path
+
 # import optuna
 # from optuna.samplers import TPESampler
 from typing import Dict, Optional
 import warnings
 from matplotlib import pyplot as plt
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from lightgbm import LGBMRegressor
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 
 def shift_by_date(group, target_col, time_delta):
     """
     Shift y backward by horizon weeks (look forward in time)
-    
+
     Args:
         group: DataFrame with columns [hex, complaint_family, week, y]
         target_col: Target column name
         time_delta: Time delta (in weeks)
-    
+
     Returns:
         DataFrame with added target column
     """
-    group = group.set_index('week').sort_index()
-    shifted = group['y'].shift(freq=-time_delta)
-    group[f'{target_col}'] = shifted
+    group = group.set_index("week").sort_index()
+    shifted = group["y"].shift(freq=-time_delta)
+    group[f"{target_col}"] = shifted
     return group.reset_index()
-    
 
-def create_horizon_targets(panel: pd.DataFrame, horizons: List[int] = list(range(1, 5))) -> pd.DataFrame:
+
+def create_horizon_targets(
+    panel: pd.DataFrame, horizons: List[int] = list(range(1, 5))
+) -> pd.DataFrame:
     """
     Create per-horizon target variables y_h1, y_h2, y_h3, y_h4.
     Uses sparse construction (only for weeks that exist in panel).
-    
+
     Args:
         panel: DataFrame with columns [hex, complaint_family, week, y]
         horizons: List of forecast horizons in weeks
-    
+
     Returns:
         DataFrame with added target columns y_h1, y_h2, ..., y_hN
     """
     result = panel.copy()
-    result = result.sort_values(['hex8', 'complaint_family', 'week'])
-    
+    result = result.sort_values(["hex8", "complaint_family", "week"])
+
     for horizon in horizons:
-        target_col = f'y_h{horizon}'
+        target_col = f"y_h{horizon}"
         time_delta = pd.Timedelta(weeks=horizon)
-        result = (
-            result.groupby(['hex8', 'complaint_family'], group_keys=False)
-            .apply(lambda group: shift_by_date(group, target_col, time_delta))
+        result = result.groupby(["hex8", "complaint_family"], group_keys=False).apply(
+            lambda group: shift_by_date(group, target_col, time_delta)
         )
         result[target_col] = result[target_col].fillna(0)
 
     return result
 
 
-def train_forecast_per_family(
-    panel: pd.DataFrame,
-    family: str,
+def select_features(X, feature_list):
+    """
+    Select columns from X based off of list
+
+        Parameters:
+            X: DataFrame of features transformation
+            feature_list: list of features
+        Returns:
+            X: DataFrame of subsetted columns
+    """
+    X = X[feature_list].copy()
+    return X
+
+
+def filter_data(X, y):
+    """
+    Filter X and y based on null values in X
+
+        Parameters:
+            X: DataFrame of features
+            y: Series of target values
+        Returns:
+            X_transformed: subsetted DataFrame
+            y_transformed: subsetted Series
+    """
+    nan_mask = pd.isnull(X).any(axis=1)
+    X_transformed = X[~nan_mask]
+    y_transformed = y[~nan_mask]
+    print("X shape post-filtering:", X_transformed.shape)
+    return X_transformed, y_transformed
+
+
+def split_train_test_by_cutoff(X, y, date_column="day", cutoff="2024-01-01"):
+    """Split X and y by a date cutoff where test >= cutoff.
+    Returns X_train, X_test, y_train, y_test
+    """
+    cutoff = pd.Timestamp(cutoff)
+    mask_test = pd.to_datetime(X[date_column]) >= cutoff
+    X_train, X_test = X[~mask_test].copy(), X[mask_test].copy()
+    y_train, y_test = y.loc[X_train.index].copy(), y.loc[X_test.index].copy()
+    return X_train, X_test, y_train, y_test
+
+
+def make_time_based_cv(X, n_splits=5, date_column="day", max_train_size=None):
+    """Create a TimeSeriesSplit configured for the provided data order.
+    Assumes X is already sorted by date ascending.
+    """
+    # The splitter will use the row order, so ensure we are sorted
+    assert X[
+        date_column
+    ].is_monotonic_increasing, "X must be sorted ascending by date_column for TimeSeriesSplit"
+    return TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
+
+
+def fit_pipeline(
+    df_input,
+    regressor,
+    target_column,
+    input_columns,
+    numerical_columns,
+    categorical_columns,
+    date_column="week",
+    test_cutoff="2024-01-01",
+    cv_splits=5,
+    cv_scoring=None,
+    cv_max_train_size=None,
+):
+    """
+    Fit pipeline with a fixed train/test split where test is 2024-01-01 onwards.
+    Performs time-based (expanding window) cross-validation on the TRAIN ONLY.
+
+    Parameters:
+        df_input: input DataFrame
+        regressor: sklearn-compatible regressor
+        target_column: str, target name
+        input_columns: list of columns to use as model inputs
+        numerical_columns: list of numeric columns (passed through)
+        categorical_columns: list of categorical columns (one-hot)
+        date_column: str, name of date column (default 'day')
+        test_cutoff: str | timestamp, boundary where test >= cutoff (default '2024-01-01')
+        cv_splits: int, number of time-based CV splits on train (default 5)
+        cv_scoring: str | callable, sklearn scoring for CV (optional)
+        cv_max_train_size: int | None, optional cap for train size in each fold
+
+    Returns:
+        pipeline: fitted sklearn pipeline
+        X_train, X_test, y_train, y_test: the split datasets
+        cv_scores: list | None of CV scores (if scoring provided)
+        cv_splitter: the TimeSeriesSplit instance used
+    """
+    # Sort by date ascending
+    df = df_input.sort_values(by=date_column).reset_index(drop=True)
+
+    # Build features/target
+    feature_list = numerical_columns + categorical_columns
+    X = df[input_columns].copy()
+    y = df[target_column].copy()
+
+    print("X shape pre-filtering:", X.shape)
+    X, y = filter_data(X, y)
+
+    # Enforce datetime
+    X[date_column] = pd.to_datetime(X[date_column])
+
+    # Fixed cutoff split: test is 2024+
+    X_train, X_test, y_train, y_test = split_train_test_by_cutoff(
+        X, y, date_column=date_column, cutoff=test_cutoff
+    )
+
+    print(
+        f"Train dates [{X_train[date_column].min()} to {X_train[date_column].max()}], "
+        f"Test dates [{X_test[date_column].min()} to {X_test[date_column].max()}]"
+    )
+    print("X training shape:", X_train.shape)
+    print("X test shape:", X_test.shape)
+
+    # Preprocessor: OHE for categoricals; pass-through numerics
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "one_hot_encoder",
+                OneHotEncoder(handle_unknown="ignore", drop="first"),
+                categorical_columns,
+            ),
+        ],
+        remainder="passthrough",  # keep numeric columns
+    )
+
+    pipeline = Pipeline(
+        steps=[
+            (
+                "select_features",
+                FunctionTransformer(select_features, kw_args={"feature_list": feature_list}),
+            ),
+            ("preprocessor", preprocessor),
+            ("regressor", regressor),
+        ]
+    )
+
+    # -----------------------------
+    # Time-based CV on TRAIN ONLY
+    # -----------------------------
+    # Ensure train is sorted (it already is by construction, but be explicit)
+    X_train = X_train.sort_values(by=date_column)
+    y_train = y_train.loc[X_train.index]
+
+    cv_splitter = make_time_based_cv(
+        X_train, n_splits=cv_splits, date_column=date_column, max_train_size=cv_max_train_size
+    )
+
+    cv_scores = None
+    if cv_scoring is not None:
+        # Evaluate with CV on the training set only
+        cv_scores = cross_val_score(
+            pipeline, X_train, y_train, cv=cv_splitter, scoring=cv_scoring, n_jobs=None
+        )
+        print(f"CV ({cv_scoring}) scores:", cv_scores)
+        print("CV mean:", cv_scores.mean())
+
+    # Fit final model on all TRAIN data
+    pipeline.fit(X_train, y_train)
+
+    return pipeline, X_train, X_test, y_train, y_test, cv_scores, cv_splitter
+
+
+def train_models(
+    df: pd.DataFrame,
+    numerical_columns: list[str],
+    categorical_columns: list[str],
     horizons: List[int] = list(range(1, 5)),
-    feature_cols: Optional[List[str]] = None,
-    val_weeks: int = 8,
-    params: Optional[Dict] = None
+    params: Optional[Dict] = None,
 ) -> Dict:
     """
     Train multi-horizon forecast models for a single complaint family.
-    
+
     Args:
         panel: DataFrame from build_forecast_panel with all families
-        family: Complaint family to train on
         horizons: List of forecast horizons (weeks)
         feature_cols: Feature columns to use (auto-detected if None)
-        val_weeks: Number of weeks to use for validation
         params: LightGBM parameters (uses defaults if None)
-    
+
     Returns:
         Bundle dict with 'family', 'feature_cols', 'cat_cols', 'models', 'metrics'
     """
-    # Filter to family
-    df = panel[panel['complaint_family'] == family].copy()
-    
-    if len(df) == 0:
-        raise ValueError(f"No data for family: {family}")
-    
-    print(f"Training forecast for {family}: {len(df)} rows")
-    
-    # Create horizon targets
     df = create_horizon_targets(df, horizons)
-    
-    # Default feature columns
-    if feature_cols is None:
-        feature_cols = [
-            'week_of_year', 'month', 'quarter',
-            'lag1', 'lag4', 'roll4', 'roll12',
-            'momentum', 'weeks_since_last',
-            'tavg', 'prcp', 'heating_degree', 'cooling_degree',
-            'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll4', 'nbr_roll12'
-        ]
-        # Add hex as categorical
-        # if 'hex8' in df.columns:
-        #     feature_cols = ['hex8'] + feature_cols
-        
-        # Filter to available columns
-        feature_cols = [c for c in feature_cols if c in df.columns]
-    
-    cat_cols = ['hex8'] if 'hex8' in feature_cols else []
-    
-    # Time-based split
-    cutoff_date = df['week'].max() - pd.Timedelta(weeks=val_weeks)
-    train_mask = df['week'] < cutoff_date
-    val_mask = df['week'] >= cutoff_date
-    
-    X_train = df.loc[train_mask, feature_cols]
-    X_val = df.loc[val_mask, feature_cols]
-    
-    # Default LightGBM params
+    input_columns = df.columns.tolist()
     if params is None:
         params = {
-            'objective': 'poisson',
-            'n_estimators': 800,
-            'learning_rate': 0.05,
-            'max_depth': 6,
-            'num_leaves': 31,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
-            'min_child_samples': 20,
-            'random_state': 42,
-            'verbose': -1
+            "objective": "poisson",
+            "n_estimators": 800,
+            "learning_rate": 0.05,
+            "max_depth": 6,
+            "num_leaves": 31,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "min_child_samples": 20,
+            "random_state": 42,
+            "verbose": -1,
         }
-    
-    # Train one model per horizon
+
+    regressor = LGBMRegressor(**params)
     models = {}
     metrics = {}
-    
+    full_fits = {}
     for horizon in horizons:
-        target_col = f'y_h{horizon}'
-        
-        # Get targets (drop NaN from shifting)
-        y_train = df.loc[train_mask, target_col].dropna()
-        y_val = df.loc[val_mask, target_col].dropna()
-        
-        # Align features
-        X_train_h = X_train.loc[y_train.index]
-        X_val_h = X_val.loc[y_val.index]
-        
-        if len(y_train) < 50:
-            print(f"  Skipping h={horizon}: insufficient training data ({len(y_train)} rows)")
-            continue
-        
-        # Train model
-        model = lgb.LGBMRegressor(**params)
-        
-        # Fit with categorical features
-        if cat_cols:
-            model.fit(
-                X_train_h, y_train,
-                eval_set=[(X_val_h, y_val)] if len(y_val) > 0 else None,
-                categorical_feature=cat_cols,
-                eval_metric='poisson'
-            )
-        else:
-            model.fit(
-                X_train_h, y_train,
-                eval_set=[(X_val_h, y_val)] if len(y_val) > 0 else None,
-                eval_metric='poisson'
-            )
-        
-        models[horizon] = model
-        
-        # Compute validation metrics
-        if len(y_val) > 0:
-            y_pred = model.predict(X_val_h)
-            rmse = np.sqrt(np.mean((y_val - y_pred) ** 2))
-            mae = np.mean(np.abs(y_val - y_pred))
-            
-            # Poisson deviance
-            epsilon = 1e-10
-            poisson_dev = 2 * np.mean(
-                y_val * np.log((y_val + epsilon) / (y_pred + epsilon)) - (y_val - y_pred)
-            )
-            
-            metrics[horizon] = {
-                'rmse': float(rmse),
-                'mae': float(mae),
-                'poisson_deviance': float(poisson_dev),
-                'n_train': len(y_train),
-                'n_val': len(y_val)
-            }
-            
-            print(f"  h={horizon}: RMSE={rmse:.3f}, MAE={mae:.3f}, Poisson Dev={poisson_dev:.3f}")
-    
+        target_col = f"y_h{horizon}"
+
+        pipeline, X_train, X_test, y_train, y_test, cv_scores, cv_splitter = fit_pipeline(
+            df,
+            regressor,
+            target_col,
+            input_columns,
+            numerical_columns,
+            categorical_columns,
+            cv_splits=10,
+            cv_scoring="neg_mean_absolute_error",
+        )
+        full_fits[horizon] = {
+            "pipeline": pipeline,
+            "X_train": X_train,
+            "X_test": X_test,
+            "y_train": y_train,
+            "y_test": y_test,
+            "cv_scores": cv_scores,
+            "cv_splitter": cv_splitter,
+        }
+
+        models[horizon] = pipeline
+        y_pred_test = pipeline.predict(X_test)
+        y_pred_train = pipeline.predict(X_train)
+
+        metrics[horizon] = {
+            "train": eval_forecast(y_train, y_pred_train, horizon),
+            "test": eval_forecast(y_test, y_pred_test, horizon),
+        }
+
+        print(
+            f"  h={horizon}: RMSE={metrics[horizon]['train']['rmse']:.3f}, MAE={metrics[horizon]['train']['mae']:.3f}, Poisson Dev={metrics[horizon]['train']['poisson_deviance']:.3f}"
+        )
+        print(
+            f"  h={horizon}: RMSE={metrics[horizon]['test']['rmse']:.3f}, MAE={metrics[horizon]['test']['mae']:.3f}, Poisson Dev={metrics[horizon]['test']['poisson_deviance']:.3f}"
+        )
+
     bundle = {
-        'family': family,
-        'feature_cols': feature_cols,
-        'cat_cols': cat_cols,
-        'models': models,
-        'metrics': metrics,
-        'horizons': list(models.keys())
+        "numerical_columns": numerical_columns,
+        "categorical_columns": categorical_columns,
+        "models": models,
+        "metrics": metrics,
+        "horizons": horizons,
+        "full_fits": full_fits,
     }
-    
+
     return bundle
 
 
-def train_all_families(
-    panel: pd.DataFrame,
-    families: Optional[List[str]] = None,
-    horizons: List[int] = list(range(1, 5)),
-    val_weeks: int = 8,
-    params: Optional[Dict] = None
-) -> Dict[str, Dict]:
-    """
-    Train forecast models for all (or specified) complaint families.
-    
-    Args:
-        panel: Full forecast panel
-        families: List of families to train (all if None)
-        horizons: Forecast horizons (weeks)
-        val_weeks: Validation weeks
-        params: LightGBM parameters
-    
-    Returns:
-        Dict mapping family -> bundle
-    """
-    if families is None:
-        families = panel['complaint_family'].unique()
-    
-    bundles = {}
-    
-    for family in families:
-        bundle = train_forecast_per_family(
-            panel, family, horizons, val_weeks=val_weeks, params=params
-        )
-        bundles[family] = bundle
-    
-    print(f"\n✓ Trained {len(bundles)} family models")
-    return bundles
-
-
 def predict_forecast(
-    bundles: Dict[str, Dict],
-    last_rows: pd.DataFrame,
-    horizon: int = 4
+    bundles: Dict[str, Dict], last_rows: pd.DataFrame, horizon: int = 4
 ) -> pd.DataFrame:
     """
     Generate forecasts from the latest state.
-    
+
     Args:
         bundles: Dict of trained model bundles per family
         last_rows: Latest row per [hex, complaint_family] with features
         horizon: Forecast horizon (1-4 weeks)
-    
+
     Returns:
         DataFrame with [hex, complaint_family, week, p50, p10, p90]
     """
     predictions = []
-    
+
     for family, bundle in bundles.items():
-        if horizon not in bundle['models']:
+        if horizon not in bundle["models"]:
             continue
-        
+
         # Filter to this family
-        df_fam = last_rows[last_rows['complaint_family'] == family].copy()
-        
+        df_fam = last_rows[last_rows["complaint_family"] == family].copy()
+
         if len(df_fam) == 0:
             continue
-        
-        model = bundle['models'][horizon]
-        feature_cols = bundle['feature_cols']
-        
+
+        model = bundle["models"][horizon]
+        feature_cols = bundle["feature_cols"]
+
         # Check features exist
         missing = [c for c in feature_cols if c not in df_fam.columns]
         if missing:
             print(f"Warning: {family} missing features: {missing}")
             continue
-        
+
         X = df_fam[feature_cols]
-        
+
         # Predict
         y_pred = model.predict(X)
-        
+
         # For Poisson, use variance = mean for uncertainty
         # p50 = mean, p10/p90 via Poisson quantiles
         from scipy.stats import poisson
-        
+
         p50 = y_pred
         p10 = np.array([poisson.ppf(0.1, lam) if lam > 0 else 0 for lam in y_pred])
         p90 = np.array([poisson.ppf(0.9, lam) if lam > 0 else 0 for lam in y_pred])
-        
+
         # Forecast week
-        forecast_week = df_fam['week'] + pd.Timedelta(weeks=horizon)
-        
-        pred_df = pd.DataFrame({
-            'hex8': df_fam['hex8'].values,
-            'complaint_family': family,
-            'week': forecast_week,
-            'p50': p50,
-            'p10': p10,
-            'p90': p90
-        })
-        
+        forecast_week = df_fam["week"] + pd.Timedelta(weeks=horizon)
+
+        pred_df = pd.DataFrame(
+            {
+                "hex8": df_fam["hex8"].values,
+                "complaint_family": family,
+                "week": forecast_week,
+                "p50": p50,
+                "p10": p10,
+                "p90": p90,
+            }
+        )
+
         predictions.append(pred_df)
-    
+
     if not predictions:
-        return pd.DataFrame(columns=['hex8', 'complaint_family', 'week', 'p50', 'p10', 'p90'])
-    
+        return pd.DataFrame(columns=["hex8", "complaint_family", "week", "p50", "p10", "p90"])
+
     result = pd.concat(predictions, ignore_index=True)
     return result
 
@@ -320,17 +401,17 @@ def predict_forecast(
 def save_bundles(bundles: Dict[str, Dict], output_dir: Path) -> None:
     """
     Save forecast bundles to disk.
-    
+
     Args:
         bundles: Dict of model bundles
         output_dir: Output directory
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     for family, bundle in bundles.items():
         # Sanitize filename
-        safe_name = family.replace('/', '_').replace(' ', '_')
+        safe_name = family.replace("/", "_").replace(" ", "_")
         path = output_dir / f"forecast_{safe_name}.joblib"
         joblib.dump(bundle, path)
         print(f"Saved {family} -> {path}")
@@ -339,26 +420,23 @@ def save_bundles(bundles: Dict[str, Dict], output_dir: Path) -> None:
 def load_bundles(input_dir: Path) -> Dict[str, Dict]:
     """
     Load forecast bundles from disk.
-    
+
     Args:
         input_dir: Directory with .joblib files
-    
+
     Returns:
         Dict of model bundles
     """
     input_dir = Path(input_dir)
     bundles = {}
-    
+
     for path in input_dir.glob("forecast_*.joblib"):
         bundle = joblib.load(path)
-        family = bundle['family']
+        family = bundle["family"]
         bundles[family] = bundle
         print(f"Loaded {family} <- {path}")
-    
+
     return bundles
-
-
-
 
 
 # def tune(
@@ -373,7 +451,7 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
 #     """
 #     Tune LightGBM forecast model using Optuna.
 #     Optimizes Poisson deviance on validation set.
-    
+
 #     Args:
 #         X_train: Training features
 #         y_train: Training targets
@@ -382,12 +460,12 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
 #         cat_cols: Categorical column names
 #         n_trials: Number of Optuna trials
 #         random_state: Random seed
-    
+
 #     Returns:
 #         Dict with best_params and best_score
 #     """
 #     print(f"Tuning forecast model with {n_trials} trials...")
-    
+
 #     def objective(trial):
 #         params = {
 #             'objective': 'poisson',
@@ -401,34 +479,34 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
 #             'random_state': random_state,
 #             'verbose': -1
 #         }
-        
+
 #         model = lgb.LGBMRegressor(**params)
-        
+
 #         if cat_cols:
 #             model.fit(X_train, y_train, categorical_feature=cat_cols)
 #         else:
 #             model.fit(X_train, y_train)
-        
+
 #         y_pred = model.predict(X_val)
-        
+
 #         # Poisson deviance (lower is better)
 #         epsilon = 1e-10
 #         poisson_dev = 2 * np.mean(
 #             y_val * np.log((y_val + epsilon) / (y_pred + epsilon)) - (y_val - y_pred)
 #         )
-        
+
 #         return poisson_dev
-    
+
 #     study = optuna.create_study(
 #         direction='minimize',
 #         sampler=TPESampler(seed=random_state)
 #     )
-    
+
 #     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-    
+
 #     print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
 #     print(f"✓ Best params: {study.best_params}")
-    
+
 #     return {
 #         'best_params': study.best_params,
 #         'best_score': study.best_value,
@@ -437,48 +515,43 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
 
 
 def eval_forecast(
-    y_true: pd.Series,
-    y_pred: pd.Series,
-    family: str = "Unknown",
-    horizon: int = 1
+    y_true: pd.Series, y_pred: pd.Series, family: str = "Unknown", horizon: int = 1
 ) -> Dict:
     """
     Evaluate forecast predictions.
-    
+
     Args:
         y_true: True values
         y_pred: Predicted values
         family: Complaint family name
         horizon: Forecast horizon
-    
+
     Returns:
         Dict with RMSE, MAE, Poisson deviance, MAPE
     """
     # RMSE
     rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
-    
+
     # MAE
     mae = np.mean(np.abs(y_true - y_pred))
-    
+
     # MAPE (avoid division by zero)
     mape = np.mean(np.abs((y_true - y_pred) / (y_true + 1e-10))) * 100
-    
+
     # Poisson deviance
     epsilon = 1e-10
     poisson_dev = 2 * np.mean(
         y_true * np.log((y_true + epsilon) / (y_pred + epsilon)) - (y_true - y_pred)
     )
-    
+
     metrics = {
-        'family': family,
-        'horizon': horizon,
-        'rmse': float(rmse),
-        'mae': float(mae),
-        'mape': float(mape),
-        'poisson_deviance': float(poisson_dev),
-        'n_samples': len(y_true)
+        "horizon": horizon,
+        "rmse": float(rmse),
+        "mae": float(mae),
+        "poisson_deviance": float(poisson_dev),
+        "n_samples": len(y_true),
     }
-    
+
     return metrics
 
 
@@ -486,11 +559,11 @@ def plot_forecast_calibration(
     y_true: pd.Series,
     y_pred: pd.Series,
     title: str = "Forecast Calibration",
-    output_path: Optional[Path] = None
+    output_path: Optional[Path] = None,
 ) -> None:
     """
     Plot predicted vs actual for forecast calibration.
-    
+
     Args:
         y_true: True values
         y_pred: Predicted values
@@ -498,101 +571,62 @@ def plot_forecast_calibration(
         output_path: Path to save figure (None = display only)
     """
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    
+
     # Scatter plot
     axes[0].scatter(y_pred, y_true, alpha=0.3, s=10)
     max_val = max(y_true.max(), y_pred.max())
-    axes[0].plot([0, max_val], [0, max_val], 'r--', label='Perfect calibration')
-    axes[0].set_xlabel('Predicted')
-    axes[0].set_ylabel('Actual')
-    axes[0].set_title(f'{title} - Scatter')
+    axes[0].plot([0, max_val], [0, max_val], "r--", label="Perfect calibration")
+    axes[0].set_xlabel("Predicted")
+    axes[0].set_ylabel("Actual")
+    axes[0].set_title(f"{title} - Scatter")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
-    
+
     # Binned calibration
     n_bins = 10
     bins = np.percentile(y_pred, np.linspace(0, 100, n_bins + 1))
     bin_indices = np.digitize(y_pred, bins[:-1]) - 1
-    
+
     bin_means_pred = []
     bin_means_true = []
-    
+
     for i in range(n_bins):
         mask = bin_indices == i
         if mask.sum() > 0:
             bin_means_pred.append(y_pred[mask].mean())
             bin_means_true.append(y_true[mask].mean())
-    
-    axes[1].plot(bin_means_pred, bin_means_true, 'o-', label='Binned mean')
-    axes[1].plot([0, max(bin_means_pred)], [0, max(bin_means_pred)], 'r--', label='Perfect')
-    axes[1].set_xlabel('Mean Predicted (binned)')
-    axes[1].set_ylabel('Mean Actual')
-    axes[1].set_title(f'{title} - Calibration')
+
+    axes[1].plot(bin_means_pred, bin_means_true, "o-", label="Binned mean")
+    axes[1].plot([0, max(bin_means_pred)], [0, max(bin_means_pred)], "r--", label="Perfect")
+    axes[1].set_xlabel("Mean Predicted (binned)")
+    axes[1].set_ylabel("Mean Actual")
+    axes[1].set_title(f"{title} - Calibration")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
+
     if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
         print(f"Saved calibration plot -> {output_path}")
     else:
         plt.show()
-    
+
     plt.close()
 
 
 def save_metrics(metrics: Dict, output_path: Path) -> None:
     """
     Save metrics dict to JSON file.
-    
+
     Args:
         metrics: Metrics dictionary
         output_path: Output JSON path
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(output_path, 'w') as f:
+
+    with open(output_path, "w") as f:
         json.dump(metrics, f, indent=2)
-    
+
     print(f"Saved metrics -> {output_path}")
-
-
-def print_metrics_summary(metrics: Dict, model_type: str) -> None:
-    """
-    Print formatted summary of metrics.
-    
-    Args:
-        metrics: Metrics dictionary
-        model_type: 'forecast', 'triage', or 'duration'
-    """
-    print(f"\n{'='*60}")
-    print(f"{model_type.upper()} MODEL EVALUATION")
-    print(f"{'='*60}")
-    
-    if model_type == 'forecast':
-        print(f"RMSE: {metrics.get('rmse', 'N/A'):.3f}")
-        print(f"MAE: {metrics.get('mae', 'N/A'):.3f}")
-        print(f"MAPE: {metrics.get('mape', 'N/A'):.1f}%")
-        print(f"Poisson Deviance: {metrics.get('poisson_deviance', 'N/A'):.3f}")
-    
-    elif model_type == 'triage':
-        overall = metrics.get('overall', {})
-        print(f"AUC-ROC: {overall.get('auc_roc', 'N/A'):.3f}")
-        print(f"AUC-PR: {overall.get('auc_pr', 'N/A'):.3f}")
-        print(f"Positive Rate: {overall.get('positive_rate', 'N/A'):.1%}")
-        
-        if 'per_family' in metrics:
-            print(f"\nPer-family metrics available for {len(metrics['per_family'])} families")
-    
-    elif model_type == 'duration':
-        print(f"C-Index: {metrics.get('c_index', 'N/A'):.3f}")
-        print(f"MAE (Q50): {metrics.get('mae', 'N/A'):.1f} days")
-        if metrics.get('coverage') is not None:
-            print(f"Q90 Coverage: {metrics['coverage']:.1%}")
-        print(f"Event Rate: {metrics.get('event_rate', 'N/A'):.1%}")
-    
-    print(f"{'='*60}\n")
-
-

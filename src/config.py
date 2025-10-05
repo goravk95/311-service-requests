@@ -48,7 +48,7 @@ MAX_CONCURRENT_REQUESTS = 20
 # DATA PATHS
 # =============================================================================
 # Note: These paths work for both local and S3 storage
-# Examples: 
+# Examples:
 #   Local: "data/landing/dohmh-service-requests"
 #   S3: "s3://bucket-name/landing/dohmh-service-requests"
 
@@ -102,10 +102,10 @@ DOHMH_COLUMNS = [
 # Complaint families to include in preprocessing
 # These represent the top 4 families by volume, covering ~94% of all DOHMH complaints
 COMPLAINT_FAMILIES = [
-    'vector_control',    # 483,382 records (52.07%)
-    'food_safety',       # 198,853 records (21.42%)
-    'air_smoke_mold',    # 132,134 records (14.23%)
-    'animal_control',    #  55,146 records (5.94%)
+    "vector_control",  # 483,382 records (52.07%)
+    "food_safety",  # 198,853 records (21.42%)
+    "air_smoke_mold",  # 132,134 records (14.23%)
+    "animal_control",  #  55,146 records (5.94%)
 ]
 
 
@@ -158,4 +158,3 @@ SCHEMA = pa.schema(
         ("location", pa.string()),
     ]
 )
-

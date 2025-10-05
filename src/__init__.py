@@ -41,24 +41,23 @@ from .plotting import create_hexbin_density_map
 
 __all__ = [
     # Config
-    'config',
+    "config",
     # Fetch functions
-    'fetch_all_service_requests',
-    'fetch_current_month_service_requests',
-    'fetch_acs_census_population_data',
-    'fetch_noaa_weather_data',
+    "fetch_all_service_requests",
+    "fetch_current_month_service_requests",
+    "fetch_acs_census_population_data",
+    "fetch_noaa_weather_data",
     # Preprocessing functions
-    'load_dohmh_data',
-    'create_date_features',
-    'map_freetext_columns',
-    'filter_and_clean',
-    'merge_census_data',
-    'merge_weather_data',
-    'preprocess_dohmh_data',
-    'preprocess_and_merge_external_data',
+    "load_dohmh_data",
+    "create_date_features",
+    "map_freetext_columns",
+    "filter_and_clean",
+    "merge_census_data",
+    "merge_weather_data",
+    "preprocess_dohmh_data",
+    "preprocess_and_merge_external_data",
     # Plotting functions
-    'create_hexbin_density_map',
+    "create_hexbin_density_map",
 ]
 
-__version__ = '0.1.0'
-
+__version__ = "0.1.0"

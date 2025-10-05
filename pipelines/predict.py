@@ -16,21 +16,22 @@ from src.features import (
     build_duration_features
 )
 
-from models import forecast, triage, duration
+from src import forecast
+from models import triage, duration
 
 
 def predict_forecast_task(
     df: pd.DataFrame,
-    model_dir: Path,
+    model_path: Path,
     output_csv: Path,
     horizon: int = 4
 ):
     """
-    Generate forecast predictions.
+    Generate forecast predictions using unified model.
     
     Args:
-        df: Input DataFrame
-        model_dir: Directory with trained models
+        df: Input DataFrame with features
+        model_path: Path to trained unified model file
         output_csv: Output CSV path
         horizon: Forecast horizon (1-4 weeks)
     """
@@ -38,15 +39,15 @@ def predict_forecast_task(
     print("FORECAST PREDICTION")
     print("="*60)
     
-    # Load models
-    print(f"\nLoading models from {model_dir}...")
-    bundles = forecast.load_bundles(model_dir)
+    # Load unified model
+    print(f"\nLoading model from {model_path}...")
+    bundle = forecast.load_bundle(model_path)
     
-    if not bundles:
-        print("Error: No forecast models found")
+    if not bundle:
+        print("Error: No forecast model found")
         return
     
-    print(f"✓ Loaded {len(bundles)} family models")
+    print(f"✓ Loaded unified forecast model")
     
     # Get latest row per [hex, family]
     print("\nExtracting latest state per location/family...")
@@ -56,9 +57,14 @@ def predict_forecast_task(
     
     print(f"✓ Found {len(last_rows)} location/family combinations")
     
-    # Predict
+    # Ensure complaint_family is in the features
+    if 'complaint_family' not in last_rows.columns:
+        print("Error: complaint_family column not found in data")
+        return
+    
+    # Predict using unified model
     print(f"\nGenerating {horizon}-week forecasts...")
-    predictions = forecast.predict_forecast(bundles, last_rows, horizon=horizon)
+    predictions = forecast.predict_forecast_unified(bundle, last_rows, horizon=horizon)
     
     if len(predictions) == 0:
         print("Warning: No predictions generated")
@@ -220,10 +226,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate predictions for NYC 311 models")
     parser.add_argument('--task', required=True, choices=['forecast', 'triage', 'duration'],
                        help='Model task to predict')
-    parser.add_argument('--model_dir', type=str, default=None,
-                       help='Directory with trained models (for forecast)')
-    parser.add_argument('--model_path', type=str, default=None,
-                       help='Path to trained model file (for triage/duration)')
+    parser.add_argument('--model_path', type=str, required=True,
+                       help='Path to trained model file')
     parser.add_argument('--scoring_parquet', required=True, type=str,
                        help='Path to input parquet file for scoring')
     parser.add_argument('--output_csv', required=True, type=str,
@@ -237,6 +241,7 @@ def main():
     print("NYC 311 MODEL PREDICTION")
     print("="*60)
     print(f"Task: {args.task}")
+    print(f"Model: {args.model_path}")
     print(f"Input: {args.scoring_parquet}")
     print(f"Output: {args.output_csv}")
     
@@ -256,25 +261,13 @@ def main():
     
     # Predict
     if args.task == 'forecast':
-        if not args.model_dir:
-            print("Error: --model_dir required for forecast task")
-            return
-        
-        predict_forecast_task(df, Path(args.model_dir), Path(args.output_csv), 
+        predict_forecast_task(df, Path(args.model_path), Path(args.output_csv), 
                             horizon=args.horizon)
     
     elif args.task == 'triage':
-        if not args.model_path:
-            print("Error: --model_path required for triage task")
-            return
-        
         predict_triage_task(df, Path(args.model_path), Path(args.output_csv))
     
     elif args.task == 'duration':
-        if not args.model_path:
-            print("Error: --model_path required for duration task")
-            return
-        
         predict_duration_task(df, Path(args.model_path), Path(args.output_csv))
     
     print("\n" + "="*60)
