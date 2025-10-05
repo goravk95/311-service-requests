@@ -211,13 +211,6 @@ def fit_pipeline(
         ]
     )
 
-    # -----------------------------
-    # Time-based CV on TRAIN ONLY
-    # -----------------------------
-    # Ensure train is sorted (it already is by construction, but be explicit)
-    X_train = X_train.sort_values(by=date_column)
-    y_train = y_train.loc[X_train.index]
-
     cv_splitter = make_time_based_cv(
         X_train, n_splits=cv_splits, date_column=date_column, max_train_size=cv_max_train_size
     )
@@ -242,6 +235,7 @@ def train_models(
     numerical_columns: list[str],
     categorical_columns: list[str],
     horizons: List[int] = list(range(1, 5)),
+    test_cutoff: str = "2025-01-01",
     params: Optional[Dict] = None,
 ) -> Dict:
     """
@@ -277,8 +271,8 @@ def train_models(
     metrics = {}
     full_fits = {}
     for horizon in horizons:
+        print(f"Training model for horizon {horizon}")
         target_col = f"y_h{horizon}"
-
         pipeline, X_train, X_test, y_train, y_test, cv_scores, cv_splitter = fit_pipeline(
             df,
             regressor,
@@ -286,7 +280,7 @@ def train_models(
             input_columns,
             numerical_columns,
             categorical_columns,
-            cv_splits=10,
+            test_cutoff = test_cutoff,
             cv_scoring="neg_mean_absolute_error",
         )
         full_fits[horizon] = {
@@ -613,6 +607,27 @@ def plot_forecast_calibration(
         plt.show()
 
     plt.close()
+
+
+def evaluate_models(
+    bundle: Dict,
+) -> Dict:
+    """
+    Evaluate models for a single complaint family.
+    """
+    for horizon in bundle["horizons"]:
+        plt.plot(bundle["full_fits"][horizon]["cv_scores"])
+        plt.axhline(np.mean(bundle["full_fits"][horizon]["cv_scores"]), linestyle = '--', c = '#000000')
+        plt.title(f"CV Scores for Horizon {horizon}")
+        plt.xlabel("Fold")
+        plt.ylabel("CV Score")
+        plt.show()
+
+        y_pred_test = bundle["full_fits"][horizon]["pipeline"].predict(bundle["full_fits"][horizon]["X_test"])
+        plot_forecast_calibration(bundle["full_fits"][horizon]["y_test"], y_pred_test, title=f"Forecast Calibration for Horizon {horizon}")
+
+        print(bundle["metrics"][horizon])
+        print(f"--------------------------------" * 3)
 
 
 def save_metrics(metrics: Dict, output_path: Path) -> None:
