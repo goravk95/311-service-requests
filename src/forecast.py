@@ -1,6 +1,6 @@
 """
 Forecast Model: Multi-horizon time-series prediction using LightGBM with Poisson objective.
-Trains separate models per complaint_family and per horizon (1-4 weeks).
+Trains separate models per horizon (1-4 weeks).
 """
 
 import json
@@ -710,20 +710,3 @@ def evaluate_models(
         print("Model Performance Metrics:")
         print(bundle["metrics"][horizon])
         print(f"{'='*60}\n")
-
-
-def save_metrics(metrics: Dict, output_path: Path) -> None:
-    """
-    Save metrics dict to JSON file.
-
-    Args:
-        metrics: Metrics dictionary
-        output_path: Output JSON path
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-
-    print(f"Saved metrics -> {output_path}")
