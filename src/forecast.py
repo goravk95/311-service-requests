@@ -463,7 +463,6 @@ def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> D
 def tune(
     df_input: pd.DataFrame,
     horizon: int,
-    input_columns: list,
     numerical_columns: list,
     categorical_columns: list,
     date_column: str = "week",
@@ -520,18 +519,6 @@ def tune(
     print("X training shape:", X_train.shape)
     print("X test shape:", X_test.shape)
 
-    # Preprocessor: OHE for categoricals; pass-through numerics
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "one_hot_encoder",
-                OneHotEncoder(handle_unknown="ignore", drop="first"),
-                categorical_columns,
-            ),
-        ],
-        remainder="passthrough",  # keep numeric columns
-    )
-
     def objective(trial):
         params = {
             'objective': 'poisson',
@@ -547,6 +534,18 @@ def tune(
         }
 
         regressor = LGBMRegressor(**params)
+        
+        # Preprocessor: OHE for categoricals; pass-through numerics (fresh for each trial)
+        preprocessor = ColumnTransformer(
+            transformers=[
+                (
+                    "one_hot_encoder",
+                    OneHotEncoder(handle_unknown="ignore", drop="first"),
+                    categorical_columns,
+                ),
+            ],
+            remainder="passthrough",  # keep numeric columns
+        )
         
         # Build pipeline
         pipeline = Pipeline(
