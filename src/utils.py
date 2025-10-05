@@ -44,8 +44,6 @@ def add_history_features(group_df: pd.DataFrame,
     """
     Calculate group history features.
     """
-    group_df['days_since_last'] = group_df[date_col].diff().dt.days
-
     # Find min and max dates in group_df
     min_date = group_df[date_col].min()
     max_date = group_df[date_col].max()
@@ -80,6 +78,7 @@ def add_history_features(group_df: pd.DataFrame,
         group_df[col_name] = group_df[value_col].rolling(window).sum()
 
     group_df = group_df[group_df[value_col] != 0]
+    group_df['days_since_last'] = group_df[date_col].diff().dt.days
 
     return group_df
 

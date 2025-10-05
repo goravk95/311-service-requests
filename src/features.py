@@ -45,6 +45,7 @@ def add_h3_keys(df: pd.DataFrame,
     result['dow'] = result['created_date'].dt.dayofweek
     result['hour'] = result['created_date'].dt.hour
     result['month'] = result['created_date'].dt.month
+    result['is_weekend'] = (result['dow'].isin([5, 6])).astype(int)
     
     return result
 
@@ -79,16 +80,14 @@ def build_forecast_panel(df: pd.DataFrame,
         y=('hex', 'size')  # Count tickets
     ).reset_index()
     
-    # Add calendar features
-    panel['dow'] = panel['day'].dt.dayofweek
-    panel['month'] = panel['day'].dt.month
-
     panel = panel.sort_values('day')
 
     panel = panel.groupby(['hex', 'complaint_family'], group_keys=False).apply(
         lambda group: add_history_features(group, date_col='day', value_col='y', lags=[1, 7], windows=[7, 28])
     )
     panel['momentum'] = panel['roll7'] / (panel['roll28'] + 1e-6)
+    panel['dow'] = panel['day'].dt.dayofweek
+    panel['month'] = panel['day'].dt.month
 
     panel = aggregate_on_parent(panel, res=7, hex_col='hex', agg_cols=['roll7', 'roll28'])
     
@@ -110,31 +109,22 @@ def build_forecast_panel(df: pd.DataFrame,
         how='left'
     )
     
-    if 'population' in df_valid.columns and 'GEOID' in df_valid.columns:
-        # Get hex -> population mapping (approximate)
-        hex_pop_map = df_valid.groupby(['hex', 'GEOID'])['population'].first().reset_index()
-        hex_pop_map = hex_pop_map.groupby('hex')['population'].sum().reset_index()
-        hex_pop_map.columns = ['hex', 'pop_hex']
-        
-        panel = panel.merge(hex_pop_map, on='hex', how='left')
-        panel['pop_hex'] = panel['pop_hex'].fillna(0)
-    else:
-        panel['pop_hex'] = 0.0
+    hex_pop_map = df_valid.groupby(['hex', 'GEOID'])['population'].first().reset_index()
+    hex_pop_map = hex_pop_map.groupby('hex')['population'].sum().reset_index()
+    hex_pop_map.columns = ['hex', 'pop_hex']
+    
+    panel = panel.merge(hex_pop_map, on='hex', how='left')
+    panel['pop_hex'] = panel['pop_hex'].fillna(0)
     
     panel['log_pop'] = np.log(np.maximum(panel['pop_hex'], 1))
     
     # Ensure all expected columns exist
     expected_cols = ['hex', 'complaint_family', 'day', 'y', 'dow', 'month',
-                    'lag1', 'lag7', 'roll7', 'roll14', 'roll28', 'momentum',
+                    'lag1', 'lag7', 'roll7', 'roll28', 'momentum',
                     'days_since_last', 'tavg', 'prcp', 'heating_degree',
-                    'cooling_degree', 'rain_3d', 'rain_7d', 'log_pop']
+                    'cooling_degree', 'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll7', 'nbr_roll28']
     
-    # Select final columns
-    final_cols = [c for c in expected_cols if c in panel.columns]
-    if 'nbr_roll7' in panel.columns:
-        final_cols.extend(['nbr_roll7', 'nbr_roll28'])
-    
-    return panel[final_cols].reset_index(drop=True)
+    return panel[expected_cols].reset_index(drop=True)
 
 
 def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, TfidfVectorizer]:
@@ -159,136 +149,74 @@ def build_triage_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, csr_matrix, T
     
     result = result[result['created_date'].notna()].copy()
     
-    if len(result) == 0:
-        return pd.DataFrame(), None, None
-    
-    # === TEMPORAL FEATURES ===
-    if 'hour' not in result.columns and 'created_date' in result.columns:
-        result['hour'] = result['created_date'].dt.hour
-    if 'dow' not in result.columns and 'created_date' in result.columns:
-        result['dow'] = result['created_date'].dt.dayofweek
-    if 'month' not in result.columns and 'created_date' in result.columns:
-        result['month'] = result['created_date'].dt.month
-    
-    result['is_weekend'] = (result['dow'].isin([5, 6])).astype(int)
-    
-    # === CATEGORICAL ONE-HOTS ===
     categorical_cols = ['complaint_family', 'open_data_channel_type', 'location_type',
                        'borough', 'facility_type', 'address_type']
     
     for col in categorical_cols:
-        if col in result.columns:
-            # Fill missing with "_missing"
-            result[col] = result[col].fillna('_missing').astype(str)
-            
-            # One-hot encode (limit to top categories to avoid explosion)
-            dummies = pd.get_dummies(result[col], prefix=col, prefix_sep='_')
-            
-            # Limit to top 10 categories per feature
-            if len(dummies.columns) > 10:
-                top_cols = dummies.sum().nlargest(10).index
-                dummies = dummies[top_cols]
-            
-            result = pd.concat([result, dummies], axis=1)
+        result[col] = result[col].fillna('_missing').astype(str)
+        
+        dummies = pd.get_dummies(result[col], prefix=col, prefix_sep='_')
+        
+        if len(dummies.columns) > 10:
+            top_cols = dummies.sum().nlargest(10).index
+            dummies = dummies[top_cols]
+        
+        result = pd.concat([result, dummies], axis=1)
     
-    # === DUE DATE FEATURES ===
-    if 'due_date' in result.columns:
-        result['due_date'] = pd.to_datetime(result['due_date'], errors='coerce')
-        result['due_gap_hours'] = (
-            (result['due_date'] - result['created_date']).dt.total_seconds() / 3600
-        ).fillna(0)
-        
-        # Flag for ~60 day SLA (admin auto-close)
-        result['due_is_60d'] = (
-            (result['due_gap_hours'] >= 58*24) & 
-            (result['due_gap_hours'] <= 62*24)
-        ).astype(int)
-        
-        # Due crosses weekend
-        result['due_crosses_weekend'] = (
-            (result['dow'] <= 4) &  # Created on weekday
-            ((result['due_gap_hours'] / 24 + result['dow']) >= 5)  # Extends into weekend
-        ).astype(int)
-    else:
-        result['due_gap_hours'] = 0.0
-        result['due_is_60d'] = 0
-        result['due_crosses_weekend'] = 0
+    result['due_date'] = pd.to_datetime(result['due_date'], errors='coerce')
+    result['due_gap_hours'] = (
+        (result['due_date'] - result['created_date']).dt.total_seconds() / 3600
+    ).fillna(0)
     
-    # === WEATHER AT CREATION ===
-    # Weather features are already present from preprocessing
-    # Fill any missing values with 0
-    weather_features = ['tavg', 'tmax', 'tmin', 'prcp', 
-                       'heating_degree', 'cooling_degree', 'heat_flag', 'freeze_flag']
-    for col in weather_features:
-        if col not in result.columns:
-            result[col] = 0.0
-        else:
-            result[col] = result[col].fillna(0.0)
+    # Due crosses weekend
+    result['due_crosses_weekend'] = (
+        (result['dow'] <= 4) &  # Created on weekday
+        ((result['due_gap_hours'] / 24 + result['dow']) >= 5)  # Extends into weekend
+    ).astype(int)
     
-    # === LOCAL HISTORY (AS-OF) ===
-    # Build a mini forecast panel for history lookup
-    if 'hex' in result.columns and 'complaint_family' in result.columns and 'day' in result.columns:
-        # Create historical aggregates
-        history_panel = result.groupby(['hex', 'complaint_family', 'day']).size().reset_index(name='daily_count')
-        
-        # Compute rolling features per group
-        def compute_history(group):
-            group = group.sort_values('day')
-            
-            # 7-day rolling
-            group['geo_family_roll7'] = group['daily_count'].rolling(window=7, min_periods=1).sum()
-            
-            # 28-day rolling
-            group['geo_family_roll28'] = group['daily_count'].rolling(window=28, min_periods=1).sum()
-            
-            # Days since last
-            group['days_since_last_geo_family'] = group['day'].diff().dt.days.fillna(999)
-            
-            return group
-        
-        history_panel = history_panel.groupby(['hex', 'complaint_family'], group_keys=False).apply(compute_history)
-        
-        # Merge back to tickets using as-of join
-        result = result.sort_values(['hex', 'complaint_family', 'day'])
-        history_panel = history_panel.sort_values(['hex', 'complaint_family', 'day'])
-        
-        result = pd.merge_asof(
-            result,
-            history_panel[['hex', 'complaint_family', 'day', 'geo_family_roll7', 
-                          'geo_family_roll28', 'days_since_last_geo_family']],
-            on='day',
-            by=['hex', 'complaint_family'],
-            direction='backward'
-        )
+    history_panel = result.groupby(['hex', 'complaint_family', 'day']).size().reset_index(name='daily_count')
     
-    # Fill missing history features
+    # Compute rolling features per group
+    def compute_history(group):
+        group = group.sort_values('day')
+        
+        # 7-day rolling
+        group['geo_family_roll7'] = group['daily_count'].rolling(window=7, min_periods=1).sum()
+        
+        # 28-day rolling
+        group['geo_family_roll28'] = group['daily_count'].rolling(window=28, min_periods=1).sum()
+        
+        # Days since last
+        group['days_since_last_geo_family'] = group['day'].diff().dt.days.fillna(999)
+        
+        return group
+    
+    history_panel = history_panel.groupby(['hex', 'complaint_family'], group_keys=False).apply(compute_history)
+    
+    # Merge back to tickets using as-of join
+    result = result.sort_values(['day', 'hex', 'complaint_family'])
+    history_panel = history_panel.sort_values(['day', 'hex', 'complaint_family'])
+    print('merging history panel...')
+    result = pd.merge_asof(
+        result,
+        history_panel[['hex', 'complaint_family', 'day', 'geo_family_roll7', 
+                        'geo_family_roll28', 'days_since_last_geo_family']],
+        on='day',
+        by=['hex', 'complaint_family'],
+        direction='backward'
+    )
+    
+    print('filling missing history features...')
     for col in ['geo_family_roll7', 'geo_family_roll28', 'days_since_last_geo_family']:
         if col not in result.columns:
             result[col] = 0.0
         else:
             result[col] = result[col].fillna(0.0)
     
-    # === REPEAT-SITE FEATURES ===
-    # Use BBL or hash of address
-    if 'bbl' in result.columns:
-        result['site_key'] = result['bbl'].fillna('unknown')
-    else:
-        # Create site key from address components
-        addr_parts = []
-        for col in ['incident_address', 'street_name', 'incident_zip']:
-            if col in result.columns:
-                addr_parts.append(result[col].fillna('').astype(str))
-        
-        if addr_parts:
-            result['site_key'] = pd.util.hash_pandas_object(
-                pd.concat(addr_parts, axis=1), index=False
-            ).astype(str)
-        else:
-            result['site_key'] = 'unknown'
-    
-    # Compute repeat counts (as-of)
+    result['site_key'] = result['bbl'].fillna('unknown')
+ 
     result = result.sort_values('created_date')
-    
+    print('computing repeat counts...')
     def compute_repeat_counts(group):
         repeat_14d = []
         repeat_28d = []
