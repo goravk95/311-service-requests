@@ -374,44 +374,158 @@ def merge_census_data(
     return df_merged
 
 
+def convert_weather_units(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert weather data from metric to US units.
+    
+    Conversions:
+    - Temperature: Celsius to Fahrenheit (°F = °C × 9/5 + 32)
+    - Precipitation: mm to inches (inches = mm / 25.4)
+    
+    NOAA nClimGrid data comes in:
+    - Temperature: Celsius
+    - Precipitation: Tenths of millimeters
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with weather columns in metric units (tavg, tmax, tmin, prcp)
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with weather in US units (Fahrenheit and inches)
+    """
+    result = df.copy()
+    
+    # Convert temperatures from Celsius to Fahrenheit
+    for temp_col in ['tavg', 'tmax', 'tmin']:
+        if temp_col in result.columns:
+            result[temp_col] = (result[temp_col] * 9/5) + 32
+    
+    # Convert precipitation from tenths of mm to inches
+    if 'prcp' in result.columns:
+        result['prcp'] = result['prcp']  / 25.4
+    
+    return result
+
+
+def add_weather_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add derived weather features from base weather columns.
+    
+    Assumes temperatures are already in Fahrenheit and precipitation in inches.
+    
+    Calculates:
+    - Heating/cooling degree days (base 65°F)
+    - Temperature extreme flags (heat ≥90°F, freeze ≤32°F)
+    - Rolling precipitation (3-day, 7-day in inches)
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with base weather columns in US units (tavg, tmax, tmin in °F, prcp in inches)
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with all derived weather features added
+    """
+    result = df.copy()
+    
+    # Heating and cooling degree days
+    if 'tavg' in result.columns:
+        result['heating_degree'] = np.maximum(0, 65 - result['tavg'].fillna(65))
+        result['cooling_degree'] = np.maximum(0, result['tavg'].fillna(65) - 65)
+    else:
+        result['heating_degree'] = 0
+        result['cooling_degree'] = 0
+    
+    # Temperature extremes
+    if 'tmax' in result.columns:
+        result['heat_flag'] = (result['tmax'].fillna(0) >= 90).astype(int)
+    else:
+        result['heat_flag'] = 0
+    
+    if 'tmin' in result.columns:
+        result['freeze_flag'] = (result['tmin'].fillna(40) <= 32).astype(int)
+    else:
+        result['freeze_flag'] = 0
+    
+    # Rolling precipitation (only if fips and prcp exist)
+    if 'fips' in result.columns and 'prcp' in result.columns:
+        # Ensure proper sorting (handle both 'date' and 'created_date_date')
+        date_col = 'date' if 'date' in result.columns else 'created_date_date'
+        if date_col in result.columns:
+            result = result.sort_values(['fips', date_col])
+            
+            # Compute rolling sums per FIPS
+            for window in [3, 7]:
+                col_name = f'rain_{window}d'
+                result[col_name] = result.groupby('fips')['prcp'].transform(
+                    lambda x: x.rolling(window=window, min_periods=1).sum()
+                )
+    
+    return result
+
+
 def merge_weather_data(
     df: pd.DataFrame,
     weather_data_path: str
 ) -> pd.DataFrame:
     """
-    Merge weather data by FIPS code and date.
+    Merge weather data with all derived features pre-computed.
     
-    Extracts FIPS code from GEOID (first 5 characters) and merges weather data
-    (temperature and precipitation) by FIPS and date.
+    Loads weather data, converts units to US standard, computes all derived features
+    on the weather DataFrame (which is much smaller), then merges everything at once:
+    - Unit conversion: Celsius to Fahrenheit, tenths of mm to inches
+    - Base weather: tavg, tmax, tmin (°F), prcp (inches)
+    - Derived: heating_degree, cooling_degree, heat_flag, freeze_flag
+    - Rolling: rain_3d, rain_7d (inches)
     
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe with GEOID and date columns
+        Input dataframe with GEOID and created_date_date columns
     weather_data_path : str
-        Path to CSV file with weather data (must have fips, date, tmax, tmin, tavg, prcp columns)
+        Path to CSV file with weather data in metric units
+        (must have fips, date, tmax, tmin, tavg in Celsius, prcp in tenths of mm)
         
     Returns
     -------
     pd.DataFrame
-        Dataframe with weather data merged
+        Dataframe with all weather features merged in US units
     """
+    # Load and prepare weather data
+    print("  Loading weather data...")
     df_weather = pd.read_csv(weather_data_path)
     df_weather['fips'] = df_weather['fips'].astype(str)
     df_weather['date'] = pd.to_datetime(df_weather['date']).dt.date
     
+    # Convert units from metric to US (Celsius to Fahrenheit, tenths of mm to inches)
+    print("  Converting weather units (C to F, tenths of mm to inches)...")
+    df_weather = convert_weather_units(df_weather)
+    
+    # Derived features (degree days, extreme flags, rolling precipitation)
+    print("  Computing derived weather features...")
+    df_weather = add_weather_derived_features(df_weather)
+    
     # Extract FIPS from GEOID (first 5 characters)
     df['fips'] = df['GEOID'].apply(lambda x: str(x)[:5] if pd.notna(x) else None)
     
-    # Merge weather data
+    # Merge all weather features at once
+    weather_cols = ['fips', 'date', 'tmax', 'tmin', 'tavg', 'prcp',
+                   'heating_degree', 'cooling_degree', 'heat_flag', 'freeze_flag',
+                   'rain_3d', 'rain_7d']
+    
     df_merged = df.merge(
-        df_weather[['fips', 'date', 'tmax', 'tmin', 'tavg', 'prcp']],
+        df_weather[weather_cols],
         left_on=['fips', 'created_date_date'],
         right_on=['fips', 'date'],
         how='inner'
     )
     df_merged = df_merged.drop(columns=['date'])
-
+    
     return df_merged
 
 
@@ -449,6 +563,10 @@ def preprocess_and_merge_external_data(
     Loads DOHMH data from config.SERVICE_REQUESTS_DATA_PATH, preprocesses it,
     and merges census and weather data.
     
+    Weather data is automatically converted from metric to US units:
+    - Temperature: Celsius to Fahrenheit
+    - Precipitation: Tenths of millimeters to inches
+    
     Parameters
     ----------
         
@@ -456,6 +574,7 @@ def preprocess_and_merge_external_data(
     -------
     pd.DataFrame
         Fully preprocessed dataframe with external data merged
+        Weather features are in US units (°F and inches)
     """
     print("Loading DOHMH data...")
     df = load_dohmh_data()
