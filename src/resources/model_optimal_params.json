@@ -1,0 +1,34 @@
+{
+    "mean": {
+        "learning_rate": 0.03192746464617725,
+        "num_leaves": 50,
+        "max_depth": 7,
+        "min_child_samples": 47,
+        "subsample": 0.8078879450584069,
+        "colsample_bytree": 0.8083176437020582
+    },
+    "90": {
+        "learning_rate": 0.07887181974027452,
+        "num_leaves": 50,
+        "max_depth": 7,
+        "min_child_samples": 50,
+        "subsample": 0.8977166577275697,
+        "colsample_bytree": 0.8477321175225121
+    },
+    "50": {
+        "learning_rate": 0.0730094433433837,
+        "num_leaves": 61,
+        "max_depth": 6,
+        "min_child_samples": 50,
+        "subsample": 0.801163542781466,
+        "colsample_bytree": 0.8931799396785234
+    },
+    "10": {
+        "learning_rate": 0.017796089630892412,
+        "num_leaves": 70,
+        "max_depth": 6,
+        "min_child_samples": 31,
+        "subsample": 0.7281336916899995,
+        "colsample_bytree": 0.7775050907790179
+    }
+}
