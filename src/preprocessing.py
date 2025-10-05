@@ -497,17 +497,14 @@ def merge_weather_data(
         Dataframe with all weather features merged in US units
     """
     # Load and prepare weather data
-    print("  Loading weather data...")
     df_weather = pd.read_csv(weather_data_path)
     df_weather['fips'] = df_weather['fips'].astype(str)
     df_weather['date'] = pd.to_datetime(df_weather['date']).dt.date
     
     # Convert units from metric to US (Celsius to Fahrenheit, tenths of mm to inches)
-    print("  Converting weather units (C to F, tenths of mm to inches)...")
     df_weather = convert_weather_units(df_weather)
     
     # Derived features (degree days, extreme flags, rolling precipitation)
-    print("  Computing derived weather features...")
     df_weather = add_weather_derived_features(df_weather)
     
     # Extract FIPS from GEOID (first 5 characters)
