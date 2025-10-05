@@ -410,17 +410,22 @@ def save_bundle(bundle: Dict[str, Dict], timestamp: str, filename: str) -> None:
     Returns:
         str: Path to the saved pickle file.
     """
-    output_dir = config.PROJECT_ROOT / "models" / timestamp
+    output_dir = config.PROJECT_ROOT / "models" / timestamp / "full_bundle"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
     file_path = output_dir / filename
     with open(file_path, "wb") as f:
         cloudpickle.dump(bundle, f)
-    
+
+    output_dir = config.PROJECT_ROOT / "models" / timestamp / "just_model"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    file_path = output_dir / filename
+    with open(file_path, "wb") as f:
+        cloudpickle.dump(bundle["models"], f)
+
     print(f"Model bundle saved to: {file_path}")
 
 
-def load_bundle(timestamp: Path, filename: str) -> Dict[str, Dict]:
+def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> Dict[str, Dict]:
     """
     Load forecast bundles from disk.
 
@@ -430,7 +435,7 @@ def load_bundle(timestamp: Path, filename: str) -> Dict[str, Dict]:
     Returns:
         Dict of model bundles
     """
-    file_path = config.PROJECT_ROOT / "models" / timestamp / filename
+    file_path = config.PROJECT_ROOT / "models" / timestamp / folder / filename
 
     with open(file_path, "rb") as f:
         bundle = cloudpickle.load(f)

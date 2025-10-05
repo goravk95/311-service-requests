@@ -208,5 +208,12 @@ def save_forecast_panel_data(df: pd.DataFrame) -> None:
     """
     Save the preprocessed data to S3.
     """
-    output_path = config.PRESENTATION_DATA_PATH + '/part-0000.parquet'
+    output_path = config.PRESENTATION_DATA_PATH + '/model_fitting_data.parquet'
     df.to_parquet(output_path, index=False, compression='snappy')
+
+    output_path = config.PRESENTATION_DATA_PATH + '/streamlit_data.parquet'
+    cutoff = pd.Timestamp('2025-01-01')
+    mask_test = pd.to_datetime(df["week"]) >= cutoff
+    df = df[mask_test]
+    df.to_parquet(output_path, index=False, compression='snappy')
+
