@@ -23,7 +23,7 @@ def predict_forecast_task(
     df: pd.DataFrame,
     model_dir: Path,
     output_csv: Path,
-    horizon: int = 7
+    horizon: int = 4
 ):
     """
     Generate forecast predictions.
@@ -32,7 +32,7 @@ def predict_forecast_task(
         df: Input DataFrame
         model_dir: Directory with trained models
         output_csv: Output CSV path
-        horizon: Forecast horizon (1-7)
+        horizon: Forecast horizon (1-4 weeks)
     """
     print("\n" + "="*60)
     print("FORECAST PREDICTION")
@@ -51,13 +51,13 @@ def predict_forecast_task(
     # Get latest row per [hex, family]
     print("\nExtracting latest state per location/family...")
     
-    df_sorted = df.sort_values('day')
-    last_rows = df_sorted.groupby(['hex', 'complaint_family']).last().reset_index()
+    df_sorted = df.sort_values('week')
+    last_rows = df_sorted.groupby(['hex8', 'complaint_family']).last().reset_index()
     
     print(f"✓ Found {len(last_rows)} location/family combinations")
     
     # Predict
-    print(f"\nGenerating {horizon}-day forecasts...")
+    print(f"\nGenerating {horizon}-week forecasts...")
     predictions = forecast.predict_forecast(bundles, last_rows, horizon=horizon)
     
     if len(predictions) == 0:
@@ -128,7 +128,7 @@ def predict_triage_task(
     # Merge with original data for context
     if 'unique_key' in df.columns:
         results = results.merge(
-            df[['unique_key', 'complaint_family', 'created_date', 'hex']],
+            df[['unique_key', 'complaint_family', 'created_date', 'hex8']],
             on='unique_key',
             how='left'
         )
@@ -197,7 +197,7 @@ def predict_duration_task(
     # Merge with original data for context
     if 'unique_key' in df.columns:
         results = results.merge(
-            df[['unique_key', 'complaint_family', 'created_date', 'hex']],
+            df[['unique_key', 'complaint_family', 'created_date', 'hex8']],
             on='unique_key',
             how='left'
         )
@@ -228,8 +228,8 @@ def main():
                        help='Path to input parquet file for scoring')
     parser.add_argument('--output_csv', required=True, type=str,
                        help='Output CSV path for predictions')
-    parser.add_argument('--horizon', type=int, default=7,
-                       help='Forecast horizon in days (forecast only)')
+    parser.add_argument('--horizon', type=int, default=4,
+                       help='Forecast horizon in weeks (forecast only)')
     
     args = parser.parse_args()
     
@@ -246,7 +246,7 @@ def main():
     print(f"✓ Loaded {len(df):,} records")
     
     # Add H3 keys if not present
-    if 'hex' not in df.columns:
+    if 'hex8' not in df.columns:
         print("Adding H3 keys...")
         df = add_h3_keys(df)
     

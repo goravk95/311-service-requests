@@ -1,6 +1,6 @@
 """
 Forecast Model: Multi-horizon time-series prediction using LightGBM with Poisson objective.
-Trains separate models per complaint_family and per horizon (1-7 days).
+Trains separate models per complaint_family and per horizon (1-4 weeks).
 """
 
 import json
@@ -10,8 +10,8 @@ import lightgbm as lgb
 from typing import Dict, List, Tuple, Optional
 import joblib
 from pathlib import Path
-import optuna
-from optuna.samplers import TPESampler
+# import optuna
+# from optuna.samplers import TPESampler
 from typing import Dict, Optional
 import warnings
 from matplotlib import pyplot as plt
@@ -19,36 +19,57 @@ from matplotlib import pyplot as plt
 warnings.filterwarnings('ignore')
 
 
-def create_horizon_targets(panel: pd.DataFrame, horizons: List[int] = list(range(1, 8))) -> pd.DataFrame:
+def shift_by_date(group, target_col, time_delta):
     """
-    Create per-horizon target variables y_h1, y_h2, ..., y_h7.
-    Uses sparse construction (only for days that exist in panel).
+    Shift y backward by horizon weeks (look forward in time)
     
     Args:
-        panel: DataFrame with columns [hex, complaint_family, day, y]
-        horizons: List of forecast horizons in days
+        group: DataFrame with columns [hex, complaint_family, week, y]
+        target_col: Target column name
+        time_delta: Time delta (in weeks)
+    
+    Returns:
+        DataFrame with added target column
+    """
+    group = group.set_index('week').sort_index()
+    shifted = group['y'].shift(freq=-time_delta)
+    group[f'{target_col}'] = shifted
+    return group.reset_index()
+    
+
+def create_horizon_targets(panel: pd.DataFrame, horizons: List[int] = list(range(1, 5))) -> pd.DataFrame:
+    """
+    Create per-horizon target variables y_h1, y_h2, y_h3, y_h4.
+    Uses sparse construction (only for weeks that exist in panel).
+    
+    Args:
+        panel: DataFrame with columns [hex, complaint_family, week, y]
+        horizons: List of forecast horizons in weeks
     
     Returns:
         DataFrame with added target columns y_h1, y_h2, ..., y_hN
     """
     result = panel.copy()
-    result = result.sort_values(['hex', 'complaint_family', 'day'])
+    result = result.sort_values(['hex8', 'complaint_family', 'week'])
     
     for horizon in horizons:
         target_col = f'y_h{horizon}'
-        
-        # Shift y backward by horizon days (look forward in time)
-        result[target_col] = result.groupby(['hex', 'complaint_family'])['y'].shift(-horizon)
-    
+        time_delta = pd.Timedelta(weeks=horizon)
+        result = (
+            result.groupby(['hex8', 'complaint_family'], group_keys=False)
+            .apply(lambda group: shift_by_date(group, target_col, time_delta))
+        )
+        result[target_col] = result[target_col].fillna(0)
+
     return result
 
 
 def train_forecast_per_family(
     panel: pd.DataFrame,
     family: str,
-    horizons: List[int] = list(range(1, 8)),
+    horizons: List[int] = list(range(1, 5)),
     feature_cols: Optional[List[str]] = None,
-    val_days: int = 30,
+    val_weeks: int = 8,
     params: Optional[Dict] = None
 ) -> Dict:
     """
@@ -57,9 +78,9 @@ def train_forecast_per_family(
     Args:
         panel: DataFrame from build_forecast_panel with all families
         family: Complaint family to train on
-        horizons: List of forecast horizons (days)
+        horizons: List of forecast horizons (weeks)
         feature_cols: Feature columns to use (auto-detected if None)
-        val_days: Number of days to use for validation
+        val_weeks: Number of weeks to use for validation
         params: LightGBM parameters (uses defaults if None)
     
     Returns:
@@ -79,25 +100,25 @@ def train_forecast_per_family(
     # Default feature columns
     if feature_cols is None:
         feature_cols = [
-            'dow', 'month',
-            'lag1', 'lag7', 'roll7', 'roll14', 'roll28',
-            'momentum', 'days_since_last',
+            'week_of_year', 'month', 'quarter',
+            'lag1', 'lag4', 'roll4', 'roll12',
+            'momentum', 'weeks_since_last',
             'tavg', 'prcp', 'heating_degree', 'cooling_degree',
-            'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll7', 'nbr_roll28'
+            'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll4', 'nbr_roll12'
         ]
         # Add hex as categorical
-        # if 'hex' in df.columns:
-        #     feature_cols = ['hex'] + feature_cols
+        # if 'hex8' in df.columns:
+        #     feature_cols = ['hex8'] + feature_cols
         
         # Filter to available columns
         feature_cols = [c for c in feature_cols if c in df.columns]
     
-    cat_cols = ['hex'] if 'hex' in feature_cols else []
+    cat_cols = ['hex8'] if 'hex8' in feature_cols else []
     
     # Time-based split
-    cutoff_date = df['day'].max() - pd.Timedelta(days=val_days)
-    train_mask = df['day'] < cutoff_date
-    val_mask = df['day'] >= cutoff_date
+    cutoff_date = df['week'].max() - pd.Timedelta(weeks=val_weeks)
+    train_mask = df['week'] < cutoff_date
+    val_mask = df['week'] >= cutoff_date
     
     X_train = df.loc[train_mask, feature_cols]
     X_val = df.loc[val_mask, feature_cols]
@@ -193,8 +214,8 @@ def train_forecast_per_family(
 def train_all_families(
     panel: pd.DataFrame,
     families: Optional[List[str]] = None,
-    horizons: List[int] = list(range(1, 8)),
-    val_days: int = 30,
+    horizons: List[int] = list(range(1, 5)),
+    val_weeks: int = 8,
     params: Optional[Dict] = None
 ) -> Dict[str, Dict]:
     """
@@ -203,8 +224,8 @@ def train_all_families(
     Args:
         panel: Full forecast panel
         families: List of families to train (all if None)
-        horizons: Forecast horizons
-        val_days: Validation days
+        horizons: Forecast horizons (weeks)
+        val_weeks: Validation weeks
         params: LightGBM parameters
     
     Returns:
@@ -217,7 +238,7 @@ def train_all_families(
     
     for family in families:
         bundle = train_forecast_per_family(
-            panel, family, horizons, val_days=val_days, params=params
+            panel, family, horizons, val_weeks=val_weeks, params=params
         )
         bundles[family] = bundle
     
@@ -228,7 +249,7 @@ def train_all_families(
 def predict_forecast(
     bundles: Dict[str, Dict],
     last_rows: pd.DataFrame,
-    horizon: int = 7
+    horizon: int = 4
 ) -> pd.DataFrame:
     """
     Generate forecasts from the latest state.
@@ -236,10 +257,10 @@ def predict_forecast(
     Args:
         bundles: Dict of trained model bundles per family
         last_rows: Latest row per [hex, complaint_family] with features
-        horizon: Forecast horizon (1-7)
+        horizon: Forecast horizon (1-4 weeks)
     
     Returns:
-        DataFrame with [hex, complaint_family, day, p50, p10, p90]
+        DataFrame with [hex, complaint_family, week, p50, p10, p90]
     """
     predictions = []
     
@@ -275,13 +296,13 @@ def predict_forecast(
         p10 = np.array([poisson.ppf(0.1, lam) if lam > 0 else 0 for lam in y_pred])
         p90 = np.array([poisson.ppf(0.9, lam) if lam > 0 else 0 for lam in y_pred])
         
-        # Forecast day
-        forecast_day = df_fam['day'] + pd.Timedelta(days=horizon)
+        # Forecast week
+        forecast_week = df_fam['week'] + pd.Timedelta(weeks=horizon)
         
         pred_df = pd.DataFrame({
-            'hex': df_fam['hex'].values,
+            'hex8': df_fam['hex8'].values,
             'complaint_family': family,
-            'day': forecast_day,
+            'week': forecast_week,
             'p50': p50,
             'p10': p10,
             'p90': p90
@@ -290,7 +311,7 @@ def predict_forecast(
         predictions.append(pred_df)
     
     if not predictions:
-        return pd.DataFrame(columns=['hex', 'complaint_family', 'day', 'p50', 'p10', 'p90'])
+        return pd.DataFrame(columns=['hex8', 'complaint_family', 'week', 'p50', 'p10', 'p90'])
     
     result = pd.concat(predictions, ignore_index=True)
     return result
@@ -340,79 +361,79 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
 
 
 
-def tune(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-    cat_cols: Optional[list] = None,
-    n_trials: int = 30,
-    random_state: int = 42
-) -> Dict:
-    """
-    Tune LightGBM forecast model using Optuna.
-    Optimizes Poisson deviance on validation set.
+# def tune(
+#     X_train: pd.DataFrame,
+#     y_train: pd.Series,
+#     X_val: pd.DataFrame,
+#     y_val: pd.Series,
+#     cat_cols: Optional[list] = None,
+#     n_trials: int = 30,
+#     random_state: int = 42
+# ) -> Dict:
+#     """
+#     Tune LightGBM forecast model using Optuna.
+#     Optimizes Poisson deviance on validation set.
     
-    Args:
-        X_train: Training features
-        y_train: Training targets
-        X_val: Validation features
-        y_val: Validation targets
-        cat_cols: Categorical column names
-        n_trials: Number of Optuna trials
-        random_state: Random seed
+#     Args:
+#         X_train: Training features
+#         y_train: Training targets
+#         X_val: Validation features
+#         y_val: Validation targets
+#         cat_cols: Categorical column names
+#         n_trials: Number of Optuna trials
+#         random_state: Random seed
     
-    Returns:
-        Dict with best_params and best_score
-    """
-    print(f"Tuning forecast model with {n_trials} trials...")
+#     Returns:
+#         Dict with best_params and best_score
+#     """
+#     print(f"Tuning forecast model with {n_trials} trials...")
     
-    def objective(trial):
-        params = {
-            'objective': 'poisson',
-            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-            'num_leaves': trial.suggest_int('num_leaves', 20, 100),
-            'max_depth': trial.suggest_int('max_depth', 3, 10),
-            'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
-            'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-            'n_estimators': 500,
-            'random_state': random_state,
-            'verbose': -1
-        }
+#     def objective(trial):
+#         params = {
+#             'objective': 'poisson',
+#             'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+#             'num_leaves': trial.suggest_int('num_leaves', 20, 100),
+#             'max_depth': trial.suggest_int('max_depth', 3, 10),
+#             'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+#             'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+#             'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+#             'n_estimators': 500,
+#             'random_state': random_state,
+#             'verbose': -1
+#         }
         
-        model = lgb.LGBMRegressor(**params)
+#         model = lgb.LGBMRegressor(**params)
         
-        if cat_cols:
-            model.fit(X_train, y_train, categorical_feature=cat_cols)
-        else:
-            model.fit(X_train, y_train)
+#         if cat_cols:
+#             model.fit(X_train, y_train, categorical_feature=cat_cols)
+#         else:
+#             model.fit(X_train, y_train)
         
-        y_pred = model.predict(X_val)
+#         y_pred = model.predict(X_val)
         
-        # Poisson deviance (lower is better)
-        epsilon = 1e-10
-        poisson_dev = 2 * np.mean(
-            y_val * np.log((y_val + epsilon) / (y_pred + epsilon)) - (y_val - y_pred)
-        )
+#         # Poisson deviance (lower is better)
+#         epsilon = 1e-10
+#         poisson_dev = 2 * np.mean(
+#             y_val * np.log((y_val + epsilon) / (y_pred + epsilon)) - (y_val - y_pred)
+#         )
         
-        return poisson_dev
+#         return poisson_dev
     
-    study = optuna.create_study(
-        direction='minimize',
-        sampler=TPESampler(seed=random_state)
-    )
+#     study = optuna.create_study(
+#         direction='minimize',
+#         sampler=TPESampler(seed=random_state)
+#     )
     
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+#     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
     
-    print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
-    print(f"✓ Best params: {study.best_params}")
+#     print(f"✓ Best Poisson deviance: {study.best_value:.4f}")
+#     print(f"✓ Best params: {study.best_params}")
     
-    return {
-        'best_params': study.best_params,
-        'best_score': study.best_value,
-        'study': study
-    }
+#     return {
+#         'best_params': study.best_params,
+#         'best_score': study.best_value,
+#         # 'study': study
+#     }
 
 
 def eval_forecast(
@@ -433,14 +454,6 @@ def eval_forecast(
     Returns:
         Dict with RMSE, MAE, Poisson deviance, MAPE
     """
-    # Remove NaN
-    mask = y_true.notna() & y_pred.notna()
-    y_true = y_true[mask]
-    y_pred = y_pred[mask]
-    
-    if len(y_true) == 0:
-        return {}
-    
     # RMSE
     rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
     

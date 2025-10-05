@@ -43,7 +43,7 @@ def train_forecast_task(
     
     # Build forecast panel
     print("\nBuilding forecast panel...")
-    panel = build_forecast_panel(df, use_population_offset=True)
+    panel = build_forecast_panel(df)
     
     if len(panel) == 0:
         print("Error: Empty forecast panel")
@@ -70,29 +70,29 @@ def train_forecast_task(
         df_sample = panel[panel['complaint_family'] == sample_family].copy()
         
         # Create targets
-        df_sample = forecast.create_horizon_targets(df_sample, horizons=[7])
+        df_sample = forecast.create_horizon_targets(df_sample, horizons=[4])
         
         # Features
         feature_cols = [
-            'dow', 'month', 'lag1', 'lag7', 'roll7', 'roll14', 'roll28',
-            'momentum', 'days_since_last', 'tavg', 'prcp',
+            'week_of_year', 'month', 'quarter', 'lag1', 'lag4', 'roll4', 'roll12',
+            'momentum', 'weeks_since_last', 'tavg', 'prcp',
             'heating_degree', 'cooling_degree', 'rain_3d', 'rain_7d', 'log_pop'
         ]
-        if 'hex' in df_sample.columns:
-            feature_cols = ['hex'] + feature_cols
+        if 'hex8' in df_sample.columns:
+            feature_cols = ['hex8'] + feature_cols
         feature_cols = [c for c in feature_cols if c in df_sample.columns]
         
-        cat_cols = ['hex'] if 'hex' in feature_cols else []
+        cat_cols = ['hex8'] if 'hex8' in feature_cols else []
         
         # Time split
-        cutoff_date = df_sample['day'].max() - pd.Timedelta(days=30)
-        train_mask = df_sample['day'] < cutoff_date
-        val_mask = df_sample['day'] >= cutoff_date
+        cutoff_date = df_sample['week'].max() - pd.Timedelta(weeks=8)
+        train_mask = df_sample['week'] < cutoff_date
+        val_mask = df_sample['week'] >= cutoff_date
         
         X_train = df_sample.loc[train_mask, feature_cols].dropna()
-        y_train = df_sample.loc[train_mask, 'y_h7'].dropna()
+        y_train = df_sample.loc[train_mask, 'y_h4'].dropna()
         X_val = df_sample.loc[val_mask, feature_cols].dropna()
-        y_val = df_sample.loc[val_mask, 'y_h7'].dropna()
+        y_val = df_sample.loc[val_mask, 'y_h4'].dropna()
         
         # Align
         X_train = X_train.loc[y_train.index]
@@ -349,7 +349,7 @@ def main():
     print(f"✓ Loaded {len(df):,} records")
     
     # Add H3 keys if not present
-    if 'hex' not in df.columns:
+    if 'hex8' not in df.columns:
         print("Adding H3 keys...")
         df = add_h3_keys(df)
     
