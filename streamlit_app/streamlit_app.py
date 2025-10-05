@@ -18,7 +18,9 @@ def load_bundles():
     bundle_90 = forecast.load_bundle(config.MODEL_TIMESTAMP, 'lgb_90.pkl')
     bundle_50 = forecast.load_bundle(config.MODEL_TIMESTAMP, 'lgb_50.pkl')
     bundle_10 = forecast.load_bundle(config.MODEL_TIMESTAMP, 'lgb_10.pkl')
+
     return bundle_mean, bundle_90, bundle_50, bundle_10
+
 def load_streamlit_data():
     file_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "resources", "streamlit_data.parquet")
@@ -31,11 +33,6 @@ bundle_mean, bundle_90, bundle_50, bundle_10 = load_bundles()
 
 def app():
     st.title("NYC 311 Service Requests Analysis")
-    st.write(df)
-    st.write(bundle_mean)
-    st.write(bundle_90)
-    st.write(bundle_50)
-    st.write(bundle_10)
 
 if __name__ == "__main__":
     # export PYTHONPATH="$PYTHONPATH:/Users/gorav_kumar/Documents/GitHub/nyc-311-service-requests/"

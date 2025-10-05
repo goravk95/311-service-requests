@@ -5,18 +5,18 @@ from . import preprocessing
 from . import features
 from . import forecast
 
-def train_model(run_fetch = False, save = False):
+def train_models(run_fetch = False, save_data = False, save_models = False):
     if run_fetch:
-        fetch.fetch_all_service_requests(save = save)
-        df_pop = fetch.fetch_acs_census_population_data(start_year=2013, end_year=2023, save=save)
-        df_weather = fetch.fetch_noaa_weather_data(start_year=2010, end_year=2025, save=save)
+        fetch.fetch_all_service_requests(save = save_data)
+        df_pop = fetch.fetch_acs_census_population_data(start_year=2013, end_year=2023, save=save_data)
+        df_weather = fetch.fetch_noaa_weather_data(start_year=2010, end_year=2025, save=save_data)
     
     df = preprocessing.preprocess_and_merge_external_data()
-    if save:
+    if save_data:
         preprocessing.save_preprocessed_data(df)
     
     forecast_panel = features.build_forecast_panel(df)
-    if save:
+    if save_data:
         features.save_forecast_panel_data(forecast_panel)
 
 
@@ -28,7 +28,7 @@ def train_model(run_fetch = False, save = False):
         ]
 
     categorical_columns = ['week_of_year', 'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family']
-    horizons = [1, 2, 3, 4]
+    horizons = [1]
 
     poisson_params = {
                 'objective': 'poisson',
@@ -120,11 +120,11 @@ def train_model(run_fetch = False, save = False):
 
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if save:
+    if save_models:
         forecast.save_bundle(bundle_mean,  timestamp, 'lgb_mean.pkl')
         forecast.save_bundle(bundle_90,  timestamp, 'lgb_90.pkl')
         forecast.save_bundle(bundle_50,  timestamp, 'lgb_50.pkl')
         forecast.save_bundle(bundle_10,  timestamp, 'lgb_10.pkl')
 
 if __name__ == "__main__":
-    train_model(run_fetch = True, save = True)
+    train_model(run_fetch = False, save_data = False, save_models = True)

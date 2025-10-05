@@ -20,7 +20,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score, BaseCrossValidator
 from lightgbm import LGBMRegressor
 from scipy import stats
 
@@ -48,7 +48,7 @@ def shift_by_date(group, target_col, time_delta):
 
 
 def create_horizon_targets(
-    panel: pd.DataFrame, horizons: List[int] = list(range(1, 5))
+    panel: pd.DataFrame, horizons: List[int] = [1]
 ) -> pd.DataFrame:
     """
     Create per-horizon target variables y_h1, y_h2, y_h3, y_h4.
@@ -118,16 +118,34 @@ def split_train_test_by_cutoff(X, y, date_column="day", cutoff="2024-01-01"):
     return X_train, X_test, y_train, y_test
 
 
-def make_time_based_cv(X, n_splits=5, date_column="day", max_train_size=None):
-    """Create a TimeSeriesSplit configured for the provided data order.
-    Assumes X is already sorted by date ascending.
+class YearTimeSeriesSplit(BaseCrossValidator):
     """
-    # The splitter will use the row order, so ensure we are sorted
-    assert X[
-        date_column
-    ].is_monotonic_increasing, "X must be sorted ascending by date_column for TimeSeriesSplit"
-    return TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
-
+    Time series splitter that splits data based on years.
+    
+    Parameters
+    ----------
+    year_column : array-like
+        Array containing the year for each sample.
+    """
+    def __init__(self, year_column):
+        self.year_column = np.array(year_column)
+        self.unique_years = np.unique(self.year_column)
+    
+    def get_n_splits(self, X=None, y=None, groups=None):
+        # Number of splits is number of years minus 1
+        return len(self.unique_years) - 1
+    
+    def split(self, X, y=None, groups=None):
+        X = np.array(X)
+        for i in range(1, len(self.unique_years)):
+            train_years = self.unique_years[:i]
+            test_years = [self.unique_years[i]]
+            
+            train_idx = np.where(np.isin(self.year_column, train_years))[0]
+            test_idx = np.where(np.isin(self.year_column, test_years))[0]
+            
+            yield train_idx, test_idx
+            
 
 def fit_pipeline(
     df_input,
@@ -138,9 +156,7 @@ def fit_pipeline(
     categorical_columns,
     date_column="week",
     test_cutoff="2024-01-01",
-    cv_splits=5,
     cv_scoring=None,
-    cv_max_train_size=None,
 ):
     """
     Fit pipeline with a fixed train/test split where test is 2024-01-01 onwards.
@@ -214,9 +230,9 @@ def fit_pipeline(
         ]
     )
 
-    cv_splitter = make_time_based_cv(
-        X_train, n_splits=cv_splits, date_column=date_column, max_train_size=cv_max_train_size
-    )
+    # Extract year from date column for YearTimeSeriesSplit
+    year_column = pd.to_datetime(X_train[date_column]).dt.year.values
+    cv_splitter = YearTimeSeriesSplit(year_column=year_column)
 
     cv_scores = None
     if cv_scoring is not None:
@@ -237,7 +253,7 @@ def train_models(
     df: pd.DataFrame,
     numerical_columns: list[str],
     categorical_columns: list[str],
-    horizons: List[int] = list(range(1, 5)),
+    horizons: List[int] = [1],
     params: Optional[Dict] = None,
     test_cutoff: str = "2025-01-01"
 ) -> Dict:
@@ -284,7 +300,6 @@ def train_models(
             numerical_columns,
             categorical_columns,
             test_cutoff = test_cutoff,
-            cv_splits = 5,
             cv_scoring="neg_mean_absolute_error",
         )
         full_fits[horizon] = {
@@ -313,6 +328,7 @@ def train_models(
         print(
             f"  h={horizon}: RMSE={metrics[horizon]['test']['rmse']:.3f}, MAE={metrics[horizon]['test']['mae']:.3f}, Poisson Dev={metrics[horizon]['test']['poisson_deviance']:.3f}"
         )
+        print()
 
     bundle = {
         "numerical_columns": numerical_columns,
