@@ -15,14 +15,10 @@ from typing import Optional
 from . import config
 
 
-def load_dohmh_data(data_path: Optional[str] = None) -> pd.DataFrame:
+def load_dohmh_data() -> pd.DataFrame:
     """
     Load DOHMH service request data from S3/local parquet files.
 
-    Parameters
-    ----------
-    data_path : str, optional
-        Path to the parquet data directory. If None, uses config.SERVICE_REQUESTS_DATA_PATH
 
     Returns
     -------
@@ -30,10 +26,7 @@ def load_dohmh_data(data_path: Optional[str] = None) -> pd.DataFrame:
         DataFrame with DOHMH service request data
 
     """
-    if data_path is None:
-        data_path = config.SERVICE_REQUESTS_DATA_PATH
-
-    df = pd.read_parquet(data_path)
+    df = pd.read_parquet(config.LANDING_DATA_PATH)
 
     return df
 
@@ -571,7 +564,7 @@ def preprocess_and_merge_external_data() -> pd.DataFrame:
     """
     Full pipeline: load, preprocess, and merge external datasets.
 
-    Loads DOHMH data from config.SERVICE_REQUESTS_DATA_PATH, preprocesses it,
+    Loads DOHMH data from config.LANDING_DATA_PATH, preprocesses it,
     and merges census and weather data.
 
     Weather data is automatically converted from metric to US units:
@@ -612,3 +605,15 @@ def preprocess_and_merge_external_data() -> pd.DataFrame:
     print("Final Data Shape:", df.shape)
 
     return df
+
+
+def save_preprocessed_data(df: pd.DataFrame) -> None:
+    """
+    Save the preprocessed data to S3, partitioned by year.
+    """
+    partition_column = "year"
+
+    for year_value in df[partition_column].unique():
+        partition_df = df[df[partition_column] == year_value]
+        partition_df.to_parquet(config.CURATION_DATA_PATH+ f"/{partition_column}={year_value}/part-0000.parquet", index=False, compression='snappy')
+        

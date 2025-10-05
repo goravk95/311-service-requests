@@ -22,3 +22,5 @@ censusdata==1.15
 contextily==1.6.2
 black==25.9.0
 openpyxl==3.1.5
+cloudpickle==3.1.1
+streamlit==1.50.0

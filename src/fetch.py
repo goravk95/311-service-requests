@@ -165,7 +165,7 @@ def _fetch_data_for_month(
         if save:
             # Write to year/month partition
             file_path = (
-                config.SERVICE_REQUESTS_DATA_PATH
+                config.LANDING_DATA_PATH
                 + f"/year={year}/month={month:02d}/part-0000.parquet"
             )
             # Only enforce schema when using full schema, otherwise let pandas infer

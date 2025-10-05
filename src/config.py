@@ -53,7 +53,9 @@ MAX_CONCURRENT_REQUESTS = 20
 #   S3: "s3://bucket-name/landing/dohmh-service-requests"
 
 # Main 311 service requests data (partitioned parquet files)
-SERVICE_REQUESTS_DATA_PATH = "s3://hbc-technical-assessment-gk/landing/DOHMH"
+LANDING_DATA_PATH = "s3://hbc-technical-assessment-gk/landing/DOHMH"
+CURATION_DATA_PATH = "s3://hbc-technical-assessment-gk/curation/DOHMH"
+PRESENTATION_DATA_PATH = "s3://hbc-technical-assessment-gk/presentation/DOHMH"
 
 # External datasets
 CENSUS_DATA_PATH = DATA_DIR / "acs-population" / "combined_population_data.csv"
@@ -158,3 +160,6 @@ SCHEMA = pa.schema(
         ("location", pa.string()),
     ]
 )
+
+
+MODEL_TIMESTAMP = '20251005_125647'

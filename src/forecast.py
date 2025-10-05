@@ -4,9 +4,9 @@ Trains separate models per complaint_family and per horizon (1-4 weeks).
 """
 
 import json
+import cloudpickle
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
 from typing import Dict, List, Tuple, Optional
 import joblib
 from pathlib import Path
@@ -23,6 +23,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from lightgbm import LGBMRegressor
 from scipy import stats
+
+from . import config
 
 warnings.filterwarnings("ignore")
 
@@ -151,7 +153,7 @@ def fit_pipeline(
         input_columns: list of columns to use as model inputs
         numerical_columns: list of numeric columns (passed through)
         categorical_columns: list of categorical columns (one-hot)
-        date_column: str, name of date column (default 'day')
+        date_column: str, name of date column (default 'week')
         test_cutoff: str | timestamp, boundary where test >= cutoff (default '2024-01-01')
         cv_splits: int, number of time-based CV splits on train (default 5)
         cv_scoring: str | callable, sklearn scoring for CV (optional)
@@ -395,26 +397,30 @@ def predict_forecast(
     return result
 
 
-def save_bundles(bundles: Dict[str, Dict], output_dir: Path) -> None:
+def save_bundle(bundle: Dict[str, Dict], timestamp: str, filename: str) -> None:
     """
-    Save forecast bundles to disk.
-
+    Save a dictionary of sklearn objects (models, transformers, etc.)
+    as one bundled pickle file in models/<timestamp>/.
+    
     Args:
-        bundles: Dict of model bundles
-        output_dir: Output directory
+        model_dict (dict): Dictionary of sklearn objects.
+        output_dir (str): Base directory to save the models.
+        filename (str): Name of the file to save the models. Ending with .pkl
+        
+    Returns:
+        str: Path to the saved pickle file.
     """
-    output_dir = Path(output_dir)
+    output_dir = config.PROJECT_ROOT / "models" / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = output_dir / filename
+    with open(file_path, "wb") as f:
+        cloudpickle.dump(bundle, f)
+    
+    print(f"Model bundle saved to: {file_path}")
 
-    for family, bundle in bundles.items():
-        # Sanitize filename
-        safe_name = family.replace("/", "_").replace(" ", "_")
-        path = output_dir / f"forecast_{safe_name}.joblib"
-        joblib.dump(bundle, path)
-        print(f"Saved {family} -> {path}")
 
-
-def load_bundles(input_dir: Path) -> Dict[str, Dict]:
+def load_bundle(timestamp: Path, filename: str) -> Dict[str, Dict]:
     """
     Load forecast bundles from disk.
 
@@ -424,16 +430,13 @@ def load_bundles(input_dir: Path) -> Dict[str, Dict]:
     Returns:
         Dict of model bundles
     """
-    input_dir = Path(input_dir)
-    bundles = {}
+    file_path = config.PROJECT_ROOT / "models" / timestamp / filename
 
-    for path in input_dir.glob("forecast_*.joblib"):
-        bundle = joblib.load(path)
-        family = bundle["family"]
-        bundles[family] = bundle
-        print(f"Loaded {family} <- {path}")
+    with open(file_path, "rb") as f:
+        bundle = cloudpickle.load(f)
+    print(f"Model bundle loaded from: {file_path}")
 
-    return bundles
+    return bundle
 
 
 # def tune(

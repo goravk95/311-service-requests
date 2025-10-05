@@ -6,8 +6,9 @@ Implements leakage-safe feature builders for Forecast, Triage, and Duration mode
 import numpy as np
 import pandas as pd
 import h3
-from typing import List
-
+from typing import List, Optional
+from datetime import datetime
+from . import config
 
 def aggregate_on_parent(
     df_panel: pd.DataFrame,
@@ -202,3 +203,10 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     return panel[expected_cols].reset_index(drop=True)
+
+def save_forecast_panel_data(df: pd.DataFrame) -> None:
+    """
+    Save the preprocessed data to S3.
+    """
+    output_path = config.PRESENTATION_DATA_PATH + '/part-0000.parquet'
+    df.to_parquet(output_path, index=False, compression='snappy')
