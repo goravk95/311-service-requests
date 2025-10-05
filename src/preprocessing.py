@@ -5,7 +5,7 @@ This module contains functions for cleaning and preprocessing NYC 311 service re
 including deduplication, feature engineering, freetext mapping, and external data merging.
 """
 
-import os
+from datetime import date
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -45,7 +45,7 @@ def create_date_features(df: pd.DataFrame) -> pd.DataFrame:
     Creates the following features:
 
     Date/Time Components:
-    - created_date_date: Date portion of created_date (no time component)
+    - day: Date portion of created_date (no time component)
     - created_date_hour: Created date rounded to hour (for deduplication)
 
     Duration Features (Timedelta):
@@ -78,7 +78,7 @@ def create_date_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
 
-    df["created_date_date"] = df["created_date"].dt.date
+    df["day"] = df["created_date"].dt.date
     df["created_date_hour"] = df["created_date"].dt.floor("h")
 
     df["time_to_resolution"] = df["closed_date"] - df["created_date"]
@@ -195,6 +195,8 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df[df["is_closed_before_created"] == False]
     df = df[df["is_identical_created_closed"] == False]
+
+    df = df[df['day'] >= date(2010, 1, 1)]
 
     return df
 
@@ -462,8 +464,8 @@ def add_weather_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Rolling precipitation (only if fips and prcp exist)
     if "fips" in result.columns and "prcp" in result.columns:
-        # Ensure proper sorting (handle both 'date' and 'created_date_date')
-        date_col = "date" if "date" in result.columns else "created_date_date"
+        # Ensure proper sorting (handle both 'date' and 'day')
+        date_col = "date" if "date" in result.columns else "day"
         if date_col in result.columns:
             result = result.sort_values(["fips", date_col])
 
@@ -491,7 +493,7 @@ def merge_weather_data(df: pd.DataFrame, weather_data_path: str) -> pd.DataFrame
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe with GEOID and created_date_date columns
+        Input dataframe with GEOID and day columns
     weather_data_path : str
         Path to CSV file with weather data in metric units
         (must have fips, date, tmax, tmin, tavg in Celsius, prcp in tenths of mm)
@@ -533,7 +535,7 @@ def merge_weather_data(df: pd.DataFrame, weather_data_path: str) -> pd.DataFrame
 
     df_merged = df.merge(
         df_weather[weather_cols],
-        left_on=["fips", "created_date_date"],
+        left_on=["fips", "day"],
         right_on=["fips", "date"],
         how="inner",
     )
