@@ -463,6 +463,7 @@ def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> D
 def tune(
     df_input: pd.DataFrame,
     horizon: int,
+    input_columns: list,
     numerical_columns: list,
     categorical_columns: list,
     date_column: str = "week",
