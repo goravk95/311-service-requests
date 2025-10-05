@@ -228,7 +228,7 @@ async def fetch_all_service_requests(
     Args:
         save (bool): Whether to save the data to disk. Defaults to True.
         columns (list, optional): List of column names to select. If None, selects all columns.
-            For DOHMH data, pass config.DOHDMH_COLUMNS.
+            For DOHMH data, pass config.DOHMH_COLUMNS.
         additional_filter (str, optional): Additional WHERE clause filter.
             For DOHMH data, pass config.AGENCY_FILTER.
 
@@ -243,7 +243,7 @@ async def fetch_all_service_requests(
         >>> 
         >>> # Fetch only DOHMH data with selected columns
         >>> asyncio.run(fetch_all_service_requests(
-        ...     columns=config.DOHDMH_COLUMNS,
+        ...     columns=config.DOHMH_COLUMNS,
         ...     additional_filter=config.AGENCY_FILTER
         ... ))
 
@@ -276,7 +276,7 @@ async def fetch_current_month_service_requests(
     Args:
         save (bool): Whether to save the data to disk. Defaults to True.
         columns (list, optional): List of column names to select. If None, selects all columns.
-            For DOHMH data, pass config.DOHDMH_COLUMNS.
+            For DOHMH data, pass config.DOHMH_COLUMNS.
         additional_filter (str, optional): Additional WHERE clause filter.
             For DOHMH data, pass config.AGENCY_FILTER.
 
