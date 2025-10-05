@@ -102,7 +102,7 @@ def filter_data(X, y):
     """
     nan_mask = pd.isnull(X).any(axis=1)
     X_transformed = X[~nan_mask]
-    y_transformed = y[~nan_mask]
+    y_transformed = y.loc[X_transformed.index]  # Use .loc with actual indices
     print("X shape post-filtering:", X_transformed.shape)
     return X_transformed, y_transformed
 
