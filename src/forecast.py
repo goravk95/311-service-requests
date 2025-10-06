@@ -671,6 +671,8 @@ def plot_forecast_calibration(
     y_pred: pd.Series,
     title: str = "Forecast Calibration",
     output_path: Optional[Path] = None,
+    model_type: Optional[str] = None,
+    n_bins: int = 10,
 ) -> None:
     """
     Plot predicted vs actual for forecast calibration.
@@ -680,8 +682,19 @@ def plot_forecast_calibration(
         y_pred: Predicted values
         title: Plot title
         output_path: Path to save figure (None = display only)
+        model_type: Model type - "mean" for Poisson or percentile as string ("10", "50", "90")
+        n_bins: Number of bins for calibration plot (default: 10)
     """
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Add model type to title if provided
+    plot_title = title
+    if model_type is not None:
+        if model_type.lower() == "mean":
+            plot_title = f"{title} (Mean)"
+        else:
+            # Handle percentile as string ("10", "50", "90")
+            plot_title = f"{title} (P{model_type})"
 
     # Scatter plot
     axes[0].scatter(y_pred, y_true, alpha=0.3, s=10)
@@ -689,29 +702,45 @@ def plot_forecast_calibration(
     axes[0].plot([0, max_val], [0, max_val], "r--", label="Perfect calibration")
     axes[0].set_xlabel("Predicted")
     axes[0].set_ylabel("Actual")
-    axes[0].set_title(f"{title} - Scatter")
+    axes[0].set_title(f"{plot_title} - Scatter")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
     # Binned calibration
-    n_bins = 10
     bins = np.percentile(y_pred, np.linspace(0, 100, n_bins + 1))
     bin_indices = np.digitize(y_pred, bins[:-1]) - 1
 
-    bin_means_pred = []
-    bin_means_true = []
+    bin_values_pred = []
+    bin_values_true = []
 
-    for i in range(n_bins):
-        mask = bin_indices == i
-        if mask.sum() > 0:
-            bin_means_pred.append(y_pred[mask].mean())
-            bin_means_true.append(y_true[mask].mean())
-
-    axes[1].plot(bin_means_pred, bin_means_true, "o-", label="Binned mean")
-    axes[1].plot([0, max(bin_means_pred)], [0, max(bin_means_pred)], "r--", label="Perfect")
-    axes[1].set_xlabel("Mean Predicted (binned)")
-    axes[1].set_ylabel("Mean Actual")
-    axes[1].set_title(f"{title} - Calibration")
+    # Determine whether to use mean or percentile for calibration
+    if model_type is not None and model_type.lower() != "mean":
+        # Use percentile for quantile models
+        percentile_value = float(model_type)
+        for i in range(n_bins):
+            mask = bin_indices == i
+            if mask.sum() > 0:
+                bin_values_pred.append(np.percentile(y_pred[mask], 50))  # Median of predicted
+                bin_values_true.append(np.percentile(y_true[mask], percentile_value))
+        
+        axes[1].plot(bin_values_pred, bin_values_true, "o-", label=f"Binned P{model_type}")
+        axes[1].plot([0, max(bin_values_pred)], [0, max(bin_values_pred)], "r--", label="Perfect")
+        axes[1].set_xlabel(f"P{model_type} Predicted (binned)")
+        axes[1].set_ylabel(f"P{model_type} Actual")
+    else:
+        # Use mean for mean models
+        for i in range(n_bins):
+            mask = bin_indices == i
+            if mask.sum() > 0:
+                bin_values_pred.append(y_pred[mask].mean())
+                bin_values_true.append(y_true[mask].mean())
+        
+        axes[1].plot(bin_values_pred, bin_values_true, "o-", label="Binned mean")
+        axes[1].plot([0, max(bin_values_pred)], [0, max(bin_values_pred)], "r--", label="Perfect")
+        axes[1].set_xlabel("Mean Predicted (binned)")
+        axes[1].set_ylabel("Mean Actual")
+    
+    axes[1].set_title(f"{plot_title} - Calibration")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 
@@ -728,10 +757,17 @@ def plot_forecast_calibration(
 
 def evaluate_models(
     bundle: Dict,
+    model_type: Optional[str] = None,
+    n_bins: int = 10,
 ) -> Dict:
     """
     Evaluate models with cross-validation scores, calibration plots, and residual analysis.
     Includes normality tests and QQ plots for residuals.
+    
+    Args:
+        bundle: Model bundle containing trained models and evaluation data
+        model_type: Model type - "mean" for Poisson or percentile as string ("10", "50", "90")
+        n_bins: Number of bins for calibration plot (default: 10)
     """
     for horizon in bundle["horizons"]:
         # CV Scores Plot
@@ -747,7 +783,13 @@ def evaluate_models(
         y_pred_test = bundle["full_fits"][horizon]["pipeline"].predict(bundle["full_fits"][horizon]["X_test"])
         
         # Forecast Calibration Plot
-        plot_forecast_calibration(y_true_test, y_pred_test, title=f"Forecast Calibration for Horizon {horizon}")
+        plot_forecast_calibration(
+            y_true_test, 
+            y_pred_test, 
+            title=f"Forecast Calibration for Horizon {horizon}",
+            model_type=model_type,
+            n_bins=n_bins
+        )
 
         # Residual Analysis
         residuals = y_true_test - y_pred_test
