@@ -127,4 +127,4 @@ CATEGORICAL_COLUMNS = [
     'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family', 'covid_flag'
 ]
 
-MODEL_TIMESTAMP = '20251005_192302'
+MODEL_TIMESTAMP = '20251006_015425'
