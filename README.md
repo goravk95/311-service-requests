@@ -35,7 +35,7 @@ DOHMH was selected for several reasons:
 
 1. **Clone this repository:**
    ```bash
-   git clone https://github.com/yourusername/nyc-311-service-requests.git
+   git clone https://github.com/goravk96/nyc-311-service-requests.git
    cd nyc-311-service-requests
    ```
 
@@ -73,7 +73,6 @@ Then, proceed through the numbered notebooks in order to understand the developm
 ```
 nyc-311-service-requests/
 ├── data/                       # Raw and processed data
-│   └── landing/               # Partitioned parquet files and external data
 ├── models/                     # Trained model artifacts
 ├── notebooks/                  # Analysis and development notebooks
 ├── src/                        # Source code modules
@@ -85,6 +84,8 @@ nyc-311-service-requests/
 │   ├── train.py               # Model training scripts
 │   └── resources/             # Reference data and mappings
 ├── streamlit_app/             # Interactive dashboard
+│   └── resources/             # Reference data and mappings
+│   ├── app.py                 # Steamlit app
 └── requirements.txt           # Python dependencies
 ```
 
