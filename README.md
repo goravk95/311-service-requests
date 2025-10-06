@@ -1,85 +1,95 @@
-# nyc-311-service-requests
+# NYC 311 Service Requests: DOHMH Ticket Forecasting
 
-This repository serves as an analysis of NYC 311 service requests data.
+## Background
 
-Specifically, we focus on service requests tied to the **DOHMH (Department of Health and Mental Hygiene)**. This agency was selected for several reasons:
+This repository aims to provide tools to the NYC Department of Health and Mental Hygiene (DOHMH) that aid them in:
+- Identifying problematic areas of NYC where they frequently receive tickets
+- Forecasting future (1-week ahead) ticket flow
+- Comparing predicted patterns with historical data
 
-- **Interesting issues:** The DOHMH dataset contains specific issues that are intriguing to explore.
-- **Data size:** The full service requests dataset contains 41M rows. Some agencies have millions of requests, which would make data wrangling and exploration cumbersome. Additionally, working with a larger dataset would make it harder to ingest new data since the existing dataset already consumes significant memory. DOHMH has over 1M rows, which is large but manageable without needing big data tools.
-- **Personal interest:** Many DOHMH requests are health-related. Out of curiosity, I wanted to explore whether the data aligns with locations I've been to.
+DOHMH was selected for several reasons:
 
-## 📚 Documentation
+- **Interesting problem domain:** The DOHMH dataset contains compelling issues such as rodent complaints and food safety inspections
+- **Manageable data size:** With approximately 1M records, it's large enough to be meaningful but digestible enough to work with efficiently without requiring big data infrastructure
 
-**New to the project?** Start with the [Quick Start Guide](docs/QUICK_START.md)
+## Technical Problem Statement
 
-| Document | Description |
-|----------|-------------|
-| **[Quick Start](docs/QUICK_START.md)** | Get started in 5 minutes |
-| **[Feature Engineering](docs/FEATURES.md)** | Complete feature engineering guide |
-| **[Model Training](docs/TRAINING.md)** | Model training and deployment |
-| **[API Reference](docs/API_REFERENCE.md)** | Full API documentation |
+**Core question:** How many tickets will be opened by next week?
 
-## 🎯 Project Goals
+## Technical Deliverables
 
-The code in this repository is written to answer the question:
+1. **Predictive Models** - Machine learning models to forecast ticket volume and characteristics
+2. **Interactive Dashboard** - Visualization tool to explore predictions and run historical scenario analyses
 
-> "How should DOHMH resources be allocated in any given week to maximize impact?"
+## Getting Started
 
-To address this, the repository creates a dashboard to visualize and analyze service request patterns.
+### Prerequisites
 
-The main driver behind this product is **three types of predictive models**:
+- Python 3.13 (version used during development)
+- NYC Open Data API credentials
 
-1. **Forecast Model:** Predicts the number of new requests expected in a given week by location and type.
-2. **Triage Model:** Predicts, for each ticket, the likelihood that it will lead to:
-   - **Inspection:** Whether the resolution requires an inspection.
-   - **SLA breach:** Whether the ticket will exceed its due date.
-3. **Duration Model:** Estimates how long it will take for a ticket to be closed (with censoring).
+### Setup Instructions
 
-Using these models, we can determine:
+1. **Clone this repository:**
+   ```bash
+   git clone https://github.com/yourusername/nyc-311-service-requests.git
+   cd nyc-311-service-requests
+   ```
 
-- The expected number of new requests for any given week and their locations.
-- The current backlog of tickets and ongoing demand for DOHMH services.
-- The probability of each ticket leading to a significant event and the time it will take to close.
+2. **Set up environment variables:**
+   
+   The NYC Open Data API (Socrata) requires authentication credentials. Create a `.env` file in the project root directory with the following variables:
+   ```
+   SOCRATA_APP_TOKEN=your_app_token
+   SOCRATA_API_KEY_ID=your_api_key_id
+   SOCRATA_API_KEY_SECRET=your_api_key_secret
+   ```
 
-We can combine severity and duration to calculate a **severity-weighted time estimate** for each ticket:
-Severity-weighted time = Severity × (Estimated Duration)
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Tickets with **high probability and high remaining time until the SLA** should receive priority.
+### Navigating the Project
 
-for priotizing, we cna do the following:
-Summarize up to the H3 level and calculate the total severity-weighted hours for each H3 cell.
+Start with the **Product Overview** notebook for a high-level overview of the problem and the two main deliverables.
 
-Show the total number of hours and estimate how many people would be needed, using the average number of items they complete.
+Then, proceed through the numbered notebooks in order to understand the development process:
 
-Take the number of inspectors as an input and show which H3s would be prioritized, based on the sorted H3 cells.
+- **Step 1 - Fetch Data:** Data acquisition from NYC Open Data API and external sources
+- **Step 2 - Basic EDA:** Exploratory data analysis and initial insights
+- **Step 3 - Data Cleanup:** Data quality improvements and preprocessing
+- **Step 4 - Feature Engineering:** Creation of predictive features including temporal, spatial, and weather data
+- **Step 5a - Tuning:** Hyperparameter optimization
+- **Step 5b - Modeling:** Final model training and evaluation
 
-### Prioritization Steps
+Each notebook documents the intermediate steps and decision-making process throughout the project.
 
-1. **Summarize at the H3 level**  
-   Calculate the total severity-weighted hours for each H3 cell.  
+## Project Structure
 
-2. **Estimate resources**  
-   Show the total number of hours and estimate how many people would be needed, using the average number of items they complete.  
+```
+nyc-311-service-requests/
+├── data/                       # Raw and processed data
+│   └── landing/               # Partitioned parquet files and external data
+├── models/                     # Trained model artifacts
+├── notebooks/                  # Analysis and development notebooks
+├── src/                        # Source code modules
+│   ├── config.py              # Configuration settings
+│   ├── features.py            # Feature engineering functions
+│   ├── fetch.py               # Data fetching utilities
+│   ├── forecast.py            # Forecasting model code
+│   ├── preprocessing.py       # Data preprocessing pipeline
+│   ├── train.py               # Model training scripts
+│   └── resources/             # Reference data and mappings
+├── streamlit_app/             # Interactive dashboard
+└── requirements.txt           # Python dependencies
+```
 
-3. **Incorporate inspector input**  
-   Take the number of inspectors as an input and show which H3s would be prioritized, based on the sorted H3 cells.  
+## References
 
+- [NOAA NCLIMGRID Daily Climate Data](https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/index.html#EpiNOAA/v1-0-0/parquet/cty/YEAR=2025/STATUS=scaled/) - Weather data source
+- [Research Paper on Climate and Disease Prediction](https://arxiv.org/pdf/2502.08649) - Literature Review
 
-N of inspectors ≈ total_inspections_completed_in_week / (inspections_per_inspector_per_day * workdays_per_week)
-225 / (3 * 5) = 15
+## Disclaimer
 
-Once all open tickets and their estimated workloads are mapped, we can prioritize neighborhoods accordingly.
-
-The dashboard includes **adjustable levers** to:
-
-- Change the day of analysis.
-- Adjust duration estimates.
-- Modify severity weightings.
-- Apply weather overrides.
-
-**Disclaimer:** Cursor code assist was used for many throwaway and visualization-heavy sections to quickly inspect the data and troubleshoot issues like misaligned axis ticks.
-
-
-https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/index.html#EpiNOAA/v1-0-0/parquet/cty/YEAR=2025/STATUS=scaled/
-
-https://arxiv.org/pdf/2502.08649
+Cursor code assist was used for many sections, especially visualization-heavy sections.
