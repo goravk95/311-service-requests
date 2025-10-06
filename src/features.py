@@ -178,7 +178,8 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     panel = panel.merge(weather_from_df, on=["hex8", "complaint_family", "week"], how="left")
-
+    panel['heat_flag'] = panel['heat_flag'].round(0)
+    panel['freeze_flag'] = panel['freeze_flag'].round(0)
     hex_pop_map = df_valid.groupby(["hex8", "GEOID"])["population"].first().reset_index()
     hex_pop_map = hex_pop_map.groupby("hex8")["population"].sum().reset_index()
     hex_pop_map.columns = ["hex8", "pop_hex"]
