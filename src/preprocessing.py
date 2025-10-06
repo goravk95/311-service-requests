@@ -187,7 +187,7 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df["is_closed_before_created"] == False]
     # df = df[df["is_identical_created_closed"] == False]
 
-    df = df[df['day'] >= date(2010, 1, 1)]
+    df = df[df["day"] >= date(2010, 1, 1)]
 
     return df
 
@@ -511,10 +511,7 @@ def merge_weather_data(df: pd.DataFrame, weather_data_path: str) -> pd.DataFrame
     ]
 
     df_merged = df.merge(
-        df_weather[weather_cols],
-        left_on=["fips", "day"],
-        right_on=["fips", "date"],
-        how="inner",
+        df_weather[weather_cols], left_on=["fips", "day"], right_on=["fips", "date"], how="inner"
     )
     df_merged = df_merged.drop(columns=["date"])
 
@@ -599,5 +596,8 @@ def save_preprocessed_data(df: pd.DataFrame) -> None:
 
     for year_value in df[partition_column].unique():
         partition_df = df[df[partition_column] == year_value]
-        partition_df.to_parquet(config.CURATION_DATA_PATH+ f"/{partition_column}={year_value}/part-0000.parquet", index=False, compression='snappy')
-        
+        partition_df.to_parquet(
+            config.CURATION_DATA_PATH + f"/{partition_column}={year_value}/part-0000.parquet",
+            index=False,
+            compression="snappy",
+        )

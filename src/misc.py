@@ -86,7 +86,9 @@ def compute_time_based_rolling_counts(
     return df
 
 
-def build_triage_features(df: pd.DataFrame) -> tuple[pd.DataFrame, csr_matrix | None, TfidfVectorizer | None]:
+def build_triage_features(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, csr_matrix | None, TfidfVectorizer | None]:
     """Build triage features for ticket-level classification.
 
     Args:
@@ -124,8 +126,7 @@ def build_triage_features(df: pd.DataFrame) -> tuple[pd.DataFrame, csr_matrix | 
     ).fillna(0)
 
     result["due_crosses_weekend"] = (
-        (result["dow"] <= 4)
-        & ((result["due_gap_hours"] / 24 + result["dow"]) >= 5)
+        (result["dow"] <= 4) & ((result["due_gap_hours"] / 24 + result["dow"]) >= 5)
     ).astype(int)
 
     history_panel = (

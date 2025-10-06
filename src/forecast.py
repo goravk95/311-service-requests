@@ -6,16 +6,17 @@ and persistence utilities.
 """
 
 import json
+from pathlib import Path
+import warnings
+from io import BytesIO
+from typing import Dict, Optional
 import cloudpickle
 import numpy as np
 import pandas as pd
-import warnings
-from pathlib import Path
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
-from typing import Dict, Optional
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import cross_val_score, BaseCrossValidator
 from lightgbm import LGBMRegressor
@@ -23,7 +24,6 @@ from scipy import stats
 import optuna
 from optuna.samplers import TPESampler
 import boto3
-from io import BytesIO
 
 from . import config
 
@@ -47,9 +47,7 @@ def shift_by_date(group: pd.DataFrame, target_col: str, time_delta: pd.Timedelta
     return group.reset_index()
 
 
-def create_horizon_targets(
-    panel: pd.DataFrame, horizons: list[int] | None = None
-) -> pd.DataFrame:
+def create_horizon_targets(panel: pd.DataFrame, horizons: list[int] | None = None) -> pd.DataFrame:
     """Create per-horizon target variables.
 
     Args:
@@ -129,28 +127,29 @@ def split_train_test_by_cutoff(
 
 class YearTimeSeriesSplit(BaseCrossValidator):
     """Time series splitter that splits data based on years.
-    
+
     Args:
         year_column: Array containing the year for each sample.
     """
+
     def __init__(self, year_column):
         self.year_column = np.array(year_column)
         self.unique_years = np.unique(self.year_column)
-    
+
     def get_n_splits(self, X=None, y=None, groups=None):
         return len(self.unique_years) - 1
-    
+
     def split(self, X, y=None, groups=None):
         X = np.array(X)
         for i in range(1, len(self.unique_years)):
             train_years = self.unique_years[:i]
             test_years = [self.unique_years[i]]
-            
+
             train_idx = np.where(np.isin(self.year_column, train_years))[0]
             test_idx = np.where(np.isin(self.year_column, test_years))[0]
-            
+
             yield train_idx, test_idx
-            
+
 
 def fit_pipeline(
     df_input,
@@ -219,7 +218,7 @@ def fit_pipeline(
                 "one_hot_encoder",
                 OneHotEncoder(handle_unknown="ignore", drop="first"),
                 categorical_columns,
-            ),
+            )
         ],
         remainder="passthrough",  # keep numeric columns
     )
@@ -260,7 +259,7 @@ def train_models(
     categorical_columns: list[str],
     horizons: list[int] | None = None,
     model_type: str = "mean",
-    test_cutoff: str = "2024-01-01"
+    test_cutoff: str = "2024-01-01",
 ) -> dict:
     """Train multi-horizon forecast models.
 
@@ -277,31 +276,33 @@ def train_models(
     """
     if horizons is None:
         horizons = [1]
-    json_path = config.RESOURCES_DIR /  'model_optimal_params.json'
-    with open(json_path, 'r') as f:
+    json_path = config.RESOURCES_DIR / "model_optimal_params.json"
+    with open(json_path, "r") as f:
         optimal_params = json.load(f)
-    
+
     if model_type not in optimal_params:
-        raise ValueError(f"model_type must be one of {list(optimal_params.keys())}, got {model_type}")
-    
+        raise ValueError(
+            f"model_type must be one of {list(optimal_params.keys())}, got {model_type}"
+        )
+
     # Get the optimal params for this model type
     tuned_params = optimal_params[model_type]
-    
+
     # Set up base parameters
     params = {
         "n_estimators": 800,
         "random_state": 42,
         "verbose": -1,
-        **tuned_params  # Add the tuned hyperparameters
+        **tuned_params,  # Add the tuned hyperparameters
     }
-    
+
     # Set objective based on model type
     if model_type == "mean":
         params["objective"] = "poisson"
     else:
         params["objective"] = "quantile"
         params["alpha"] = float(model_type) / 100  # Convert '90' to 0.9, etc.
-    
+
     df = create_horizon_targets(df, horizons)
     input_columns = df.columns.tolist()
 
@@ -319,7 +320,7 @@ def train_models(
             input_columns,
             numerical_columns,
             categorical_columns,
-            test_cutoff = test_cutoff,
+            test_cutoff=test_cutoff,
             cv_scoring="neg_mean_absolute_error",
         )
         full_fits[horizon] = {
@@ -340,11 +341,11 @@ def train_models(
             "train": eval_forecast(y_train, y_pred_train, horizon),
             "test": eval_forecast(y_test, y_pred_test, horizon),
         }
-        print('train metrics')
+        print("train metrics")
         print(
             f"  h={horizon}: RMSE={metrics[horizon]['train']['rmse']:.3f}, MAE={metrics[horizon]['train']['mae']:.3f}, Poisson Dev={metrics[horizon]['train']['poisson_deviance']:.3f}"
         )
-        print('test metrics')
+        print("test metrics")
         print(
             f"  h={horizon}: RMSE={metrics[horizon]['test']['rmse']:.3f}, MAE={metrics[horizon]['test']['mae']:.3f}, Poisson Dev={metrics[horizon]['test']['poisson_deviance']:.3f}"
         )
@@ -432,16 +433,17 @@ def predict_forecast(
     result = pd.concat(predictions, ignore_index=True)
     return result
 
+
 def save_bundle(bundle: Dict[str, Dict], timestamp: str, filename: str) -> None:
     """
     Save a dictionary of sklearn objects (models, transformers, etc.)
     as one bundled pickle file in models/<timestamp>/.
-    
+
     Args:
         model_dict (dict): Dictionary of sklearn objects.
         output_dir (str): Base directory to save the models.
         filename (str): Name of the file to save the models. Ending with .pkl
-        
+
     Returns:
         str: Path to the saved pickle file.
     """
@@ -483,26 +485,26 @@ def save_bundle_s3(bundle: Dict[str, Dict], timestamp: str, filename: str) -> No
     """
     Save a dictionary of sklearn objects (models, transformers, etc.)
     as one bundled pickle file to S3 in models/<timestamp>/.
-    
+
     Args:
         bundle (dict): Dictionary containing models and other sklearn objects.
         timestamp (str): Timestamp string for versioning (e.g., '20251006_154213').
         filename (str): Name of the file to save the models. Should end with .pkl
-        
+
     Returns:
         None
     """
-    s3_client = boto3.client('s3')
-    
+    s3_client = boto3.client("s3")
+
     bucket_name = config.BUCKET_NAME
-    prefix = 'models'
-    full_bundle_key = f"{prefix}/{timestamp}/full_bundle/{filename}" 
+    prefix = "models"
+    full_bundle_key = f"{prefix}/{timestamp}/full_bundle/{filename}"
     buffer = BytesIO()
     cloudpickle.dump(bundle, buffer)
     buffer.seek(0)
     s3_client.upload_fileobj(buffer, bucket_name, full_bundle_key)
     print(f"Full bundle saved to: s3://{bucket_name}/{full_bundle_key}")
-    
+
     just_model_key = f"{prefix}/{timestamp}/just_model/{filename}"
     buffer = BytesIO()
     cloudpickle.dump(bundle["models"], buffer)
@@ -523,18 +525,18 @@ def load_bundle_s3(timestamp: str, filename: str, folder: str = "just_model") ->
     Returns:
         Dict of model bundles
     """
-    s3_client = boto3.client('s3')
-    
+    s3_client = boto3.client("s3")
+
     bucket_name = config.BUCKET_NAME
-    prefix = 'models'
+    prefix = "models"
     s3_key = f"{prefix}/{timestamp}/{folder}/{filename}"
-    
+
     buffer = BytesIO()
     s3_client.download_fileobj(bucket_name, s3_key, buffer)
     buffer.seek(0)
     bundle = cloudpickle.load(buffer)
     print(f"Model bundle loaded from: s3://{bucket_name}/{s3_key}")
-    
+
     return bundle
 
 
@@ -603,30 +605,30 @@ def tune(
 
     def objective(trial):
         params = {
-    'learning_rate': trial.suggest_float('learning_rate', 0.02, 0.12, log=True),
-    'num_leaves': trial.suggest_int('num_leaves', 48, 112),
-    'max_depth': trial.suggest_int('max_depth', 6, 9),
-    'min_child_samples': trial.suggest_int('min_child_samples', 24, 60),
-    'subsample': trial.suggest_float('subsample', 0.70, 0.95),
-    'subsample_freq': trial.suggest_int('subsample_freq', 1, 7),  # activates subsample
-    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.70, 0.95),
-    'lambda_l1': trial.suggest_float('lambda_l1', 0.0, 2.0),
-    'lambda_l2': trial.suggest_float('lambda_l2', 0.0, 3.0),
-    'min_split_gain': trial.suggest_float('min_split_gain', 0.0, 0.5),
-    'n_estimators': trial.suggest_int('n_estimators', 350, 900),
-    'random_state': random_state,
-    'verbose': -1,
-}
-        
+            "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.12, log=True),
+            "num_leaves": trial.suggest_int("num_leaves", 48, 112),
+            "max_depth": trial.suggest_int("max_depth", 6, 9),
+            "min_child_samples": trial.suggest_int("min_child_samples", 24, 60),
+            "subsample": trial.suggest_float("subsample", 0.70, 0.95),
+            "subsample_freq": trial.suggest_int("subsample_freq", 1, 7),  # activates subsample
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.70, 0.95),
+            "lambda_l1": trial.suggest_float("lambda_l1", 0.0, 2.0),
+            "lambda_l2": trial.suggest_float("lambda_l2", 0.0, 3.0),
+            "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 0.5),
+            "n_estimators": trial.suggest_int("n_estimators", 350, 900),
+            "random_state": random_state,
+            "verbose": -1,
+        }
+
         # Set objective based on alpha
         if alpha is not None:
-            params['objective'] = 'quantile'
-            params['alpha'] = alpha
+            params["objective"] = "quantile"
+            params["alpha"] = alpha
         else:
-            params['objective'] = 'poisson'
+            params["objective"] = "poisson"
 
         regressor = LGBMRegressor(**params)
-        
+
         # Preprocessor: OHE for categoricals; pass-through numerics (fresh for each trial)
         preprocessor = ColumnTransformer(
             transformers=[
@@ -634,11 +636,11 @@ def tune(
                     "one_hot_encoder",
                     OneHotEncoder(handle_unknown="ignore", drop="first"),
                     categorical_columns,
-                ),
+                )
             ],
             remainder="passthrough",  # keep numeric columns
         )
-        
+
         # Build pipeline
         pipeline = Pipeline(
             steps=[
@@ -671,10 +673,7 @@ def tune(
 
         return loss
 
-    study = optuna.create_study(
-        direction='minimize',
-        sampler=TPESampler(seed=random_state)
-    )
+    study = optuna.create_study(direction="minimize", sampler=TPESampler(seed=random_state))
 
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
@@ -683,9 +682,9 @@ def tune(
     print(f"✓ Best params: {study.best_params}")
 
     return {
-        'best_params': study.best_params,
-        'best_score': study.best_value,
-        'alpha': alpha,
+        "best_params": study.best_params,
+        "best_score": study.best_value,
+        "alpha": alpha,
         # 'study': study
     }
 
@@ -751,7 +750,7 @@ def plot_forecast_calibration(
         n_bins: Number of bins for calibration plot (default: 10)
     """
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    
+
     # Add model type to title if provided
     plot_title = title
     if model_type is not None:
@@ -787,7 +786,7 @@ def plot_forecast_calibration(
             if mask.sum() > 0:
                 bin_values_pred.append(np.percentile(y_pred[mask], 50))  # Median of predicted
                 bin_values_true.append(np.percentile(y_true[mask], percentile_value))
-        
+
         axes[1].plot(bin_values_pred, bin_values_true, "o-", label=f"Binned P{model_type}")
         axes[1].plot([0, max(bin_values_pred)], [0, max(bin_values_pred)], "r--", label="Perfect")
         axes[1].set_xlabel(f"P{model_type} Predicted (binned)")
@@ -799,12 +798,12 @@ def plot_forecast_calibration(
             if mask.sum() > 0:
                 bin_values_pred.append(y_pred[mask].mean())
                 bin_values_true.append(y_true[mask].mean())
-        
+
         axes[1].plot(bin_values_pred, bin_values_true, "o-", label="Binned mean")
         axes[1].plot([0, max(bin_values_pred)], [0, max(bin_values_pred)], "r--", label="Perfect")
         axes[1].set_xlabel("Mean Predicted (binned)")
         axes[1].set_ylabel("Mean Actual")
-    
+
     axes[1].set_title(f"{plot_title} - Calibration")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
@@ -820,15 +819,11 @@ def plot_forecast_calibration(
     plt.close()
 
 
-def evaluate_models(
-    bundle: Dict,
-    model_type: Optional[str] = None,
-    n_bins: int = 10,
-) -> Dict:
+def evaluate_models(bundle: Dict, model_type: Optional[str] = None, n_bins: int = 10) -> Dict:
     """
     Evaluate models with cross-validation scores, calibration plots, and residual analysis.
     Includes normality tests and QQ plots for residuals.
-    
+
     Args:
         bundle: Model bundle containing trained models and evaluation data
         model_type: Model type - "mean" for Poisson or percentile as string ("10", "50", "90")
@@ -837,7 +832,7 @@ def evaluate_models(
     for horizon in bundle["horizons"]:
         # CV Scores Plot
         plt.plot(bundle["full_fits"][horizon]["cv_scores"])
-        plt.axhline(np.mean(bundle["full_fits"][horizon]["cv_scores"]), linestyle = '--', c = '#000000')
+        plt.axhline(np.mean(bundle["full_fits"][horizon]["cv_scores"]), linestyle="--", c="#000000")
         plt.title(f"CV Scores for Horizon {horizon}")
         plt.xlabel("Fold")
         plt.ylabel("CV Score")
@@ -845,53 +840,63 @@ def evaluate_models(
 
         # Get predictions
         y_true_test = bundle["full_fits"][horizon]["y_test"]
-        y_pred_test = bundle["full_fits"][horizon]["pipeline"].predict(bundle["full_fits"][horizon]["X_test"])
-        
+        y_pred_test = bundle["full_fits"][horizon]["pipeline"].predict(
+            bundle["full_fits"][horizon]["X_test"]
+        )
+
         # Forecast Calibration Plot
         plot_forecast_calibration(
-            y_true_test, 
-            y_pred_test, 
+            y_true_test,
+            y_pred_test,
             title=f"Forecast Calibration for Horizon {horizon}",
             model_type=model_type,
-            n_bins=n_bins
+            n_bins=n_bins,
         )
 
         # Residual Analysis
         residuals = y_true_test - y_pred_test
-        
+
         # Create figure with 3 subplots for residual analysis
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        
+
         # 1. Histogram of residuals with normal distribution overlay
-        axes[0].hist(residuals, bins=50, density=True, alpha=0.7, color='steelblue', edgecolor='black')
-        
+        axes[0].hist(
+            residuals, bins=50, density=True, alpha=0.7, color="steelblue", edgecolor="black"
+        )
+
         # Overlay normal distribution
         mu, std = residuals.mean(), residuals.std()
         x = np.linspace(residuals.min(), residuals.max(), 100)
-        axes[0].plot(x, stats.norm.pdf(x, mu, std), 'r-', linewidth=2, label=f'Normal(μ={mu:.2f}, σ={std:.2f})')
-        axes[0].axvline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
-        axes[0].set_xlabel('Residuals')
-        axes[0].set_ylabel('Density')
-        axes[0].set_title(f'Residual Distribution (Horizon {horizon})')
+        axes[0].plot(
+            x,
+            stats.norm.pdf(x, mu, std),
+            "r-",
+            linewidth=2,
+            label=f"Normal(μ={mu:.2f}, σ={std:.2f})",
+        )
+        axes[0].axvline(0, color="black", linestyle="--", linewidth=1, alpha=0.5)
+        axes[0].set_xlabel("Residuals")
+        axes[0].set_ylabel("Density")
+        axes[0].set_title(f"Residual Distribution (Horizon {horizon})")
         axes[0].legend()
         axes[0].grid(True, alpha=0.3)
-        
+
         # 2. QQ Plot
         stats.probplot(residuals, dist="norm", plot=axes[1])
-        axes[1].set_title(f'Q-Q Plot (Horizon {horizon})')
+        axes[1].set_title(f"Q-Q Plot (Horizon {horizon})")
         axes[1].grid(True, alpha=0.3)
-        
+
         # 3. Residuals vs Fitted Values
         axes[2].scatter(y_pred_test, residuals, alpha=0.3, s=10)
-        axes[2].axhline(0, color='red', linestyle='--', linewidth=2)
-        axes[2].set_xlabel('Fitted Values')
-        axes[2].set_ylabel('Residuals')
-        axes[2].set_title(f'Residuals vs Fitted (Horizon {horizon})')
+        axes[2].axhline(0, color="red", linestyle="--", linewidth=2)
+        axes[2].set_xlabel("Fitted Values")
+        axes[2].set_ylabel("Residuals")
+        axes[2].set_title(f"Residuals vs Fitted (Horizon {horizon})")
         axes[2].grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         plt.show()
-        
+
         # Statistical tests for normality
         print(f"\n{'='*60}")
         print(f"Horizon {horizon} - Residual Analysis")
@@ -902,23 +907,29 @@ def evaluate_models(
         print(f"  Median: {np.median(residuals):.4f}")
         print(f"  Skewness: {stats.skew(residuals):.4f}")
         print(f"  Kurtosis: {stats.kurtosis(residuals):.4f}")
-        
+
         # Shapiro-Wilk test for normality (sample up to 5000 points for efficiency)
         sample_size = min(5000, len(residuals))
-        residuals_sample = np.random.choice(residuals, size=sample_size, replace=False) if len(residuals) > sample_size else residuals
+        residuals_sample = (
+            np.random.choice(residuals, size=sample_size, replace=False)
+            if len(residuals) > sample_size
+            else residuals
+        )
         shapiro_stat, shapiro_p = stats.shapiro(residuals_sample)
         print(f"\nShapiro-Wilk Normality Test (n={len(residuals_sample)}):")
         print(f"  Statistic: {shapiro_stat:.4f}")
         print(f"  P-value: {shapiro_p:.4e}")
-        print(f"  Interpretation: {'Residuals are normally distributed (α=0.05)' if shapiro_p > 0.05 else 'Residuals are NOT normally distributed (α=0.05)'}")
-        
+        print(
+            f"  Interpretation: {'Residuals are normally distributed (α=0.05)' if shapiro_p > 0.05 else 'Residuals are NOT normally distributed (α=0.05)'}"
+        )
+
         # Anderson-Darling test
-        anderson_result = stats.anderson(residuals, dist='norm')
+        anderson_result = stats.anderson(residuals, dist="norm")
         print(f"\nAnderson-Darling Normality Test:")
         print(f"  Statistic: {anderson_result.statistic:.4f}")
         print(f"  Critical Values: {anderson_result.critical_values}")
         print(f"  Significance Levels: {anderson_result.significance_level}%")
-        
+
         print(f"\n{'-'*60}")
         print("Model Performance Metrics:")
         print(bundle["metrics"][horizon])

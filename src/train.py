@@ -12,7 +12,12 @@ from . import forecast
 from . import config
 
 
-def train_models(run_fetch: bool = False, save_data: bool = False, save_models: bool = False, save_models_s3: bool = False) -> None:
+def train_models(
+    run_fetch: bool = False,
+    save_data: bool = False,
+    save_models: bool = False,
+    save_models_s3: bool = False,
+) -> None:
     """Train forecast models for NYC 311 service requests.
 
     Args:
@@ -23,10 +28,12 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
     print("Starting training pipeline...")
     if run_fetch:
         print("Fetching data...")
-        fetch.fetch_all_service_requests(save = save_data)
-        df_pop = fetch.fetch_acs_census_population_data(start_year=2013, end_year=2023, save=save_data)
+        fetch.fetch_all_service_requests(save=save_data)
+        df_pop = fetch.fetch_acs_census_population_data(
+            start_year=2013, end_year=2023, save=save_data
+        )
         df_weather = fetch.fetch_noaa_weather_data(start_year=2010, end_year=2025, save=save_data)
-    
+
     print("Preprocessing data...")
     df = preprocessing.preprocess_and_merge_external_data()
     if save_data:
@@ -46,7 +53,7 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
         config.NUMERICAL_COLUMNS,
         config.CATEGORICAL_COLUMNS,
         horizons,
-        model_type='mean'
+        model_type="mean",
     )
 
     print("Training 90th percentile model...")
@@ -55,7 +62,7 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
         config.NUMERICAL_COLUMNS,
         config.CATEGORICAL_COLUMNS,
         horizons,
-        model_type='90'
+        model_type="90",
     )
 
     print("Training 50th percentile model...")
@@ -64,7 +71,7 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
         config.NUMERICAL_COLUMNS,
         config.CATEGORICAL_COLUMNS,
         horizons,
-        model_type='50'
+        model_type="50",
     )
 
     print("Training 10th percentile model...")
@@ -73,7 +80,7 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
         config.NUMERICAL_COLUMNS,
         config.CATEGORICAL_COLUMNS,
         horizons,
-        model_type='10'
+        model_type="10",
     )
 
     print("All models training complete!")
@@ -82,19 +89,20 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
 
     if save_models_s3:
         print("Saving models to S3...")
-        forecast.save_bundle_s3(bundle_mean,  timestamp, 'lgb_mean.pkl')
-        forecast.save_bundle_s3(bundle_90,  timestamp, 'lgb_90.pkl')
-        forecast.save_bundle_s3(bundle_50,  timestamp, 'lgb_50.pkl')
-        forecast.save_bundle_s3(bundle_10,  timestamp, 'lgb_10.pkl')
-        
+        forecast.save_bundle_s3(bundle_mean, timestamp, "lgb_mean.pkl")
+        forecast.save_bundle_s3(bundle_90, timestamp, "lgb_90.pkl")
+        forecast.save_bundle_s3(bundle_50, timestamp, "lgb_50.pkl")
+        forecast.save_bundle_s3(bundle_10, timestamp, "lgb_10.pkl")
+
     if save_models:
         print("Saving models...")
-        forecast.save_bundle(bundle_mean,  timestamp, 'lgb_mean.pkl')
-        forecast.save_bundle(bundle_90,  timestamp, 'lgb_90.pkl')
-        forecast.save_bundle(bundle_50,  timestamp, 'lgb_50.pkl')
-        forecast.save_bundle(bundle_10,  timestamp, 'lgb_10.pkl')
+        forecast.save_bundle(bundle_mean, timestamp, "lgb_mean.pkl")
+        forecast.save_bundle(bundle_90, timestamp, "lgb_90.pkl")
+        forecast.save_bundle(bundle_50, timestamp, "lgb_50.pkl")
+        forecast.save_bundle(bundle_10, timestamp, "lgb_10.pkl")
 
-    print('Done!!!')
+    print("Done!!!")
+
 
 if __name__ == "__main__":
-    train_models(run_fetch = False, save_data = False, save_models = True)
+    train_models(run_fetch=False, save_data=False, save_models=True)

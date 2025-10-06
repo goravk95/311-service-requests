@@ -16,7 +16,9 @@ import censusdata
 from . import config
 
 
-def _create_socrata_client(api_endpoint: str, app_token: str, username: str, password: str) -> Socrata:
+def _create_socrata_client(
+    api_endpoint: str, app_token: str, username: str, password: str
+) -> Socrata:
     """Create and configure a Socrata API client.
 
     Args:
@@ -93,7 +95,11 @@ def _process_dataframe(df: pd.DataFrame, use_full_schema: bool = True) -> pd.Dat
 
 
 def _fetch_data_for_month(
-    year: int, month: int, save: bool = True, columns: list[str] | None = None, additional_filter: str | None = None
+    year: int,
+    month: int,
+    save: bool = True,
+    columns: list[str] | None = None,
+    additional_filter: str | None = None,
 ) -> None:
     """Fetch and save 311 service request data for a specific month.
 
@@ -138,8 +144,7 @@ def _fetch_data_for_month(
 
         if save:
             file_path = (
-                config.LANDING_DATA_PATH
-                + f"/year={year}/month={month:02d}/part-0000.parquet"
+                config.LANDING_DATA_PATH + f"/year={year}/month={month:02d}/part-0000.parquet"
             )
             if use_full_schema:
                 df.to_parquet(file_path, index=False, schema=config.SCHEMA)
@@ -271,6 +276,7 @@ def fetch_acs_census_population_data(
             all_data.append(combined)
 
     df_pop = pd.concat(all_data, ignore_index=True)
+
     def geo_to_geoid(geo):
         params = geo.params()
         return params[0][1] + params[1][1] + params[2][1] + params[3][1]
@@ -288,7 +294,9 @@ def fetch_acs_census_population_data(
     return df_pop
 
 
-def fetch_noaa_weather_data(start_year: int = 2010, end_year: int = 2025, save: bool = True) -> pd.DataFrame:
+def fetch_noaa_weather_data(
+    start_year: int = 2010, end_year: int = 2025, save: bool = True
+) -> pd.DataFrame:
     """Fetch NOAA NCLIMGRID daily weather data for NYC counties.
 
     Args:

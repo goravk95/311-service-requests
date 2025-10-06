@@ -61,9 +61,7 @@ def create_hexbin_density_map(
     df_plot = df.dropna(subset=[lat_col, lon_col]).copy()
 
     gdf_pts = gpd.GeoDataFrame(
-        df_plot,
-        geometry=gpd.points_from_xy(df_plot[lon_col], df_plot[lat_col]),
-        crs="EPSG:4326",
+        df_plot, geometry=gpd.points_from_xy(df_plot[lon_col], df_plot[lat_col]), crs="EPSG:4326"
     )
 
     gdf_boros_3857 = gdf_boros.to_crs(3857)
@@ -141,7 +139,7 @@ def plot_h3_counts_for_week(
     df: pd.DataFrame,
     week: str,
     complaint_family: str,
-    value_col: str = 'count',
+    value_col: str = "count",
     title: str | None = None,
     cmap: str = "YlOrRd",
     figsize: tuple[int, int] = (14, 14),
@@ -166,29 +164,25 @@ def plot_h3_counts_for_week(
     Returns:
         Tuple of (figure, axes, counts DataFrame).
     """
-    df_filtered = df[(df['week'] == week) & (df['complaint_family'] == complaint_family)]
-    df_filtered['h3_cell'] = df_filtered['hex8']
+    df_filtered = df[(df["week"] == week) & (df["complaint_family"] == complaint_family)]
+    df_filtered["h3_cell"] = df_filtered["hex8"]
     final_resolution = 8
-    
-    counts_df = df_filtered.groupby('h3_cell')[value_col].sum().reset_index(name='count')
-    
+
+    counts_df = df_filtered.groupby("h3_cell")[value_col].sum().reset_index(name="count")
+
     def h3_to_polygon(h3_cell):
         boundary = h3.cell_to_boundary(h3_cell)
         coords = [(lng, lat) for lat, lng in boundary]
         return Polygon(coords)
-    
-    counts_df['geometry'] = counts_df['h3_cell'].apply(h3_to_polygon)
-    gdf_hexagons = gpd.GeoDataFrame(
-        counts_df,
-        geometry='geometry',
-        crs='EPSG:4326'
-    )
-    
+
+    counts_df["geometry"] = counts_df["h3_cell"].apply(h3_to_polygon)
+    gdf_hexagons = gpd.GeoDataFrame(counts_df, geometry="geometry", crs="EPSG:4326")
+
     bg_shapefile = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "resources", "tl_2022_36_bg")
     )
     gdf_bg = gpd.read_file(bg_shapefile)
-    
+
     gdf_bg = gdf_bg[gdf_bg["STATEFP"] == "36"]
     nyc_counties = {
         "005": "Bronx",
@@ -200,32 +194,27 @@ def plot_h3_counts_for_week(
     gdf_nyc = gdf_bg[gdf_bg["COUNTYFP"].isin(nyc_counties.keys())].copy()
     gdf_boros = gdf_nyc[["COUNTYFP", "geometry"]].dissolve(by="COUNTYFP", as_index=False)
     gdf_boros["borough"] = gdf_boros["COUNTYFP"].map(nyc_counties)
-    
+
     gdf_boros_3857 = gdf_boros.to_crs(3857)
     gdf_hexagons_3857 = gdf_hexagons.to_crs(3857)
     fig, ax = plt.subplots(figsize=figsize)
-    
+
     xmin, ymin, xmax, ymax = gdf_boros_3857.total_bounds
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    
+
     cx.add_basemap(ax, crs="EPSG:3857", source=cx.providers.CartoDB.Voyager)
     gdf_hexagons_3857.plot(
         ax=ax,
-        column='count',
+        column="count",
         cmap=cmap,
         edgecolor=edge_color,
         linewidth=edge_width,
         alpha=alpha,
         legend=True,
-        legend_kwds={
-            'label': 'Count',
-            'orientation': 'vertical',
-            'shrink': 0.8,
-            'pad': 0.02
-        }
+        legend_kwds={"label": "Count", "orientation": "vertical", "shrink": 0.8, "pad": 0.02},
     )
-    
+
     nyc_union = gdf_boros_3857.union_all()
     if nyc_union.geom_type == "Polygon":
         clip_path = Path(list(nyc_union.exterior.coords))
@@ -233,10 +222,10 @@ def plot_h3_counts_for_week(
         clip_path = Path.make_compound_path(
             *[Path(list(geom.exterior.coords)) for geom in nyc_union.geoms]
         )
-    
+
     clip_patch = PathPatch(clip_path, transform=ax.transData, facecolor="none", edgecolor="none")
     ax.add_patch(clip_patch)
-    
+
     label_gdf = gdf_boros_3857.copy()
     label_gdf["centroid"] = label_gdf.geometry.representative_point()
     for _, r in label_gdf.iterrows():
@@ -254,26 +243,28 @@ def plot_h3_counts_for_week(
         title = f"311 Service Requests - {week}"
         title += f"\n{complaint_family}"
         title += f" (H3 Resolution {final_resolution})"
-    
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=20)
+
+    ax.set_title(title, fontsize=10, fontweight="bold", pad=20)
     ax.set_axis_off()
-    
-    total_count = counts_df['count'].sum()
-    max_count = counts_df['count'].max()
+
+    total_count = counts_df["count"].sum()
+    max_count = counts_df["count"].max()
     n_hexagons = len(counts_df)
-    
+
     stats_text = f"Total Requests: {total_count:,}\n"
     stats_text += f"Max per Hexagon: {max_count:,}\n"
     stats_text += f"Active Hexagons: {n_hexagons:,}"
-    
+
     ax.text(
-        0.02, 0.98, stats_text,
+        0.02,
+        0.98,
+        stats_text,
         transform=ax.transAxes,
         fontsize=10,
-        verticalalignment='top',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
-    
+
     plt.tight_layout()
-    
+
     return fig, ax, counts_df

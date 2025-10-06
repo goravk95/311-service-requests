@@ -4,9 +4,9 @@ This module contains all configuration parameters for data fetching, preprocessi
 and modeling of NYC 311 service request data.
 """
 
+from pathlib import Path
 import os
 import pyarrow as pa
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "landing"
@@ -65,12 +65,7 @@ DOHMH_COLUMNS = [
     "open_data_channel_type",
 ]
 
-COMPLAINT_FAMILIES = [
-    "vector_control",
-    "food_safety",
-    "air_smoke_mold",
-    "animal_control",
-]
+COMPLAINT_FAMILIES = ["vector_control", "food_safety", "air_smoke_mold", "animal_control"]
 
 SCHEMA = pa.schema(
     [
@@ -118,14 +113,30 @@ SCHEMA = pa.schema(
     ]
 )
 NUMERICAL_COLUMNS = [
-    'lag1', 'lag4', 'roll4', 'roll12',
-    'momentum', 'weeks_since_last',
-    'tavg', 'prcp', 'heating_degree', 'cooling_degree',
-    'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll4', 'nbr_roll12'
+    "lag1",
+    "lag4",
+    "roll4",
+    "roll12",
+    "momentum",
+    "weeks_since_last",
+    "tavg",
+    "prcp",
+    "heating_degree",
+    "cooling_degree",
+    "rain_3d",
+    "rain_7d",
+    "log_pop",
+    "nbr_roll4",
+    "nbr_roll12",
 ]
 
 CATEGORICAL_COLUMNS = [
-    'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family', 'covid_flag'
+    "month",
+    "heat_flag",
+    "freeze_flag",
+    "hex6",
+    "complaint_family",
+    "covid_flag",
 ]
 
-MODEL_TIMESTAMP = '20251006_154213'
+MODEL_TIMESTAMP = "20251006_154213"

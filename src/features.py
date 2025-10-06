@@ -9,6 +9,7 @@ import pandas as pd
 import h3
 from . import config
 
+
 def aggregate_on_parent(
     df_panel: pd.DataFrame,
     res: int = 7,
@@ -106,12 +107,12 @@ def covid_flag(week: pd.Timestamp) -> str:
     Returns:
         Category string: 'pre', 'during', or 'post'.
     """
-    if week < pd.Timestamp('2020-03-01'):
-        return 'pre'
-    elif pd.Timestamp('2020-03-01') <= week <= pd.Timestamp('2021-06-30'):
-        return 'during'
+    if week < pd.Timestamp("2020-03-01"):
+        return "pre"
+    elif pd.Timestamp("2020-03-01") <= week <= pd.Timestamp("2021-06-30"):
+        return "during"
     else:
-        return 'post'
+        return "post"
 
 
 def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
@@ -134,9 +135,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     df_valid = df_valid[df_valid["hex8"].notna() & df_valid["complaint_family"].notna()].copy()
 
     panel = (
-        df_valid.groupby(["hex8", "complaint_family", "week"])
-        .agg(y=("hex8", "size"))
-        .reset_index()
+        df_valid.groupby(["hex8", "complaint_family", "week"]).agg(y=("hex8", "size")).reset_index()
     )
 
     panel = panel.sort_values("week")
@@ -153,7 +152,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     panel["month"] = panel["week"].dt.month
     panel["quarter"] = panel["week"].dt.quarter
     panel["hex6"] = panel["hex8"].apply(lambda x: h3.cell_to_parent(x, 6))
-    panel['covid_flag'] = panel['week'].apply(covid_flag)
+    panel["covid_flag"] = panel["week"].apply(covid_flag)
 
     panel = aggregate_on_parent(panel, res=7, hex_col="hex8", agg_cols=["roll4", "roll12"])
 
@@ -178,8 +177,8 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     panel = panel.merge(weather_from_df, on=["hex8", "complaint_family", "week"], how="left")
-    panel['heat_flag'] = panel['heat_flag'].round(0)
-    panel['freeze_flag'] = panel['freeze_flag'].round(0)
+    panel["heat_flag"] = panel["heat_flag"].round(0)
+    panel["freeze_flag"] = panel["freeze_flag"].round(0)
     hex_pop_map = df_valid.groupby(["hex8", "GEOID"])["population"].first().reset_index()
     hex_pop_map = hex_pop_map.groupby("hex8")["population"].sum().reset_index()
     hex_pop_map.columns = ["hex8", "pop_hex"]
@@ -220,6 +219,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
 
     return panel[expected_cols].reset_index(drop=True)
 
+
 def save_forecast_panel_data(df: pd.DataFrame) -> None:
     """Save forecast panel data to S3.
 
@@ -229,12 +229,11 @@ def save_forecast_panel_data(df: pd.DataFrame) -> None:
     Args:
         df: Forecast panel DataFrame to save.
     """
-    output_path = config.PRESENTATION_DATA_PATH + '/model_fitting_data.parquet'
-    df.to_parquet(output_path, index=False, compression='snappy')
+    output_path = config.PRESENTATION_DATA_PATH + "/model_fitting_data.parquet"
+    df.to_parquet(output_path, index=False, compression="snappy")
 
-    output_path = config.PRESENTATION_DATA_PATH + '/streamlit_data.parquet'
-    cutoff = pd.Timestamp('2024-01-01')
+    output_path = config.PRESENTATION_DATA_PATH + "/streamlit_data.parquet"
+    cutoff = pd.Timestamp("2024-01-01")
     mask_test = pd.to_datetime(df["week"]) >= cutoff
     df = df[mask_test]
-    df.to_parquet(output_path, index=False, compression='snappy')
-
+    df.to_parquet(output_path, index=False, compression="snappy")
