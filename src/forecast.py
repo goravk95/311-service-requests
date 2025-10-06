@@ -463,7 +463,7 @@ def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> D
     Load forecast bundles from disk.
 
     Args:
-        input_dir: Directory with .joblib files
+        input_dir: Directory with .pkl files
 
     Returns:
         Dict of model bundles
