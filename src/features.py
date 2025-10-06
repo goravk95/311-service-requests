@@ -127,6 +127,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
             group, date_col="week", value_col="y", lags=[1, 4], windows=[4, 12]
         )
     )
+    panel = panel.fillna(0)
     panel["momentum"] = panel["roll4"] / (panel["roll12"] + 1e-6)
 
     # Week-based temporal features
