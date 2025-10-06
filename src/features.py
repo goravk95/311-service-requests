@@ -87,6 +87,15 @@ def add_history_features(
     return group_df
 
 
+def covid_flag(week):
+    if week < pd.Timestamp('2020-03-01'):
+        return 'pre'
+    elif pd.Timestamp('2020-03-01') <= week <= pd.Timestamp('2021-06-30'):
+        return 'during'
+    else:
+        return 'post'
+
+
 def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build sparse forecast panel with time-series features.
@@ -135,6 +144,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
     panel["month"] = panel["week"].dt.month
     panel["quarter"] = panel["week"].dt.quarter
     panel["hex6"] = panel["hex8"].apply(lambda x: h3.cell_to_parent(x, 6))
+    panel['covid_flag'] = panel['week'].apply(covid_flag)
 
     panel = aggregate_on_parent(panel, res=7, hex_col="hex8", agg_cols=["roll4", "roll12"])
 
@@ -169,7 +179,6 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
 
     panel = panel.merge(hex_pop_map, on="hex8", how="left")
     panel["pop_hex"] = panel["pop_hex"].fillna(0)
-
     panel["log_pop"] = np.log(np.maximum(panel["pop_hex"], 1))
 
     # Ensure all expected columns exist
@@ -201,6 +210,7 @@ def build_forecast_panel(df: pd.DataFrame) -> pd.DataFrame:
         "log_pop",
         "nbr_roll4",
         "nbr_roll12",
+        "covid_flag",
     ]
 
     return panel[expected_cols].reset_index(drop=True)
