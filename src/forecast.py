@@ -22,6 +22,8 @@ from lightgbm import LGBMRegressor
 from scipy import stats
 import optuna
 from optuna.samplers import TPESampler
+import boto3
+from io import BytesIO
 
 from . import config
 
@@ -474,6 +476,65 @@ def load_bundle(timestamp: Path, filename: str, folder: str = "just_model") -> D
         bundle = cloudpickle.load(f)
     print(f"Model bundle loaded from: {file_path}")
 
+    return bundle
+
+
+def save_bundle_s3(bundle: Dict[str, Dict], timestamp: str, filename: str) -> None:
+    """
+    Save a dictionary of sklearn objects (models, transformers, etc.)
+    as one bundled pickle file to S3 in models/<timestamp>/.
+    
+    Args:
+        bundle (dict): Dictionary containing models and other sklearn objects.
+        timestamp (str): Timestamp string for versioning (e.g., '20251006_154213').
+        filename (str): Name of the file to save the models. Should end with .pkl
+        
+    Returns:
+        None
+    """
+    s3_client = boto3.client('s3')
+    
+    bucket_name = config.BUCKET_NAME
+    prefix = 'models'
+    full_bundle_key = f"{prefix}/{timestamp}/full_bundle/{filename}" 
+    buffer = BytesIO()
+    cloudpickle.dump(bundle, buffer)
+    buffer.seek(0)
+    s3_client.upload_fileobj(buffer, bucket_name, full_bundle_key)
+    print(f"Full bundle saved to: s3://{bucket_name}/{full_bundle_key}")
+    
+    just_model_key = f"{prefix}/{timestamp}/just_model/{filename}"
+    buffer = BytesIO()
+    cloudpickle.dump(bundle["models"], buffer)
+    buffer.seek(0)
+    s3_client.upload_fileobj(buffer, bucket_name, just_model_key)
+    print(f"Model bundle saved to: s3://{bucket_name}/{just_model_key}")
+
+
+def load_bundle_s3(timestamp: str, filename: str, folder: str = "just_model") -> Dict[str, Dict]:
+    """
+    Load forecast bundles from S3.
+
+    Args:
+        timestamp (str): Timestamp string for versioning (e.g., '20251006_154213').
+        filename (str): Name of the file to load. Should end with .pkl
+        folder (str): Subfolder name ('just_model' or 'full_bundle'). Default: 'just_model'
+
+    Returns:
+        Dict of model bundles
+    """
+    s3_client = boto3.client('s3')
+    
+    bucket_name = config.BUCKET_NAME
+    prefix = 'models'
+    s3_key = f"{prefix}/{timestamp}/{folder}/{filename}"
+    
+    buffer = BytesIO()
+    s3_client.download_fileobj(bucket_name, s3_key, buffer)
+    buffer.seek(0)
+    bundle = cloudpickle.load(buffer)
+    print(f"Model bundle loaded from: s3://{bucket_name}/{s3_key}")
+    
     return bundle
 
 

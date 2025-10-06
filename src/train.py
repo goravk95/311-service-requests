@@ -12,7 +12,7 @@ from . import forecast
 from . import config
 
 
-def train_models(run_fetch: bool = False, save_data: bool = False, save_models: bool = False) -> None:
+def train_models(run_fetch: bool = False, save_data: bool = False, save_models: bool = False, save_models_s3: bool = False) -> None:
     """Train forecast models for NYC 311 service requests.
 
     Args:
@@ -79,6 +79,14 @@ def train_models(run_fetch: bool = False, save_data: bool = False, save_models: 
     print("All models training complete!")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if save_models_s3:
+        print("Saving models to S3...")
+        forecast.save_bundle_s3(bundle_mean,  timestamp, 'lgb_mean.pkl')
+        forecast.save_bundle_s3(bundle_90,  timestamp, 'lgb_90.pkl')
+        forecast.save_bundle_s3(bundle_50,  timestamp, 'lgb_50.pkl')
+        forecast.save_bundle_s3(bundle_10,  timestamp, 'lgb_10.pkl')
+        
     if save_models:
         print("Saving models...")
         forecast.save_bundle(bundle_mean,  timestamp, 'lgb_mean.pkl')

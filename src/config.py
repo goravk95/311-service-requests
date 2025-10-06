@@ -24,9 +24,10 @@ DATA_START_YEAR = 2010
 DATA_END_YEAR = 2026
 
 MAX_CONCURRENT_REQUESTS = 20
-LANDING_DATA_PATH = "s3://hbc-technical-assessment-gk/landing/DOHMH"
-CURATION_DATA_PATH = "s3://hbc-technical-assessment-gk/curation/DOHMH"
-PRESENTATION_DATA_PATH = "s3://hbc-technical-assessment-gk/presentation/DOHMH"
+BUCKET_NAME = "hbc-technical-assessment-gk"
+LANDING_DATA_PATH = f"s3://{BUCKET_NAME}/landing/DOHMH"
+CURATION_DATA_PATH = f"s3://{BUCKET_NAME}/curation/DOHMH"
+PRESENTATION_DATA_PATH = f"s3://{BUCKET_NAME}/presentation/DOHMH"
 
 CENSUS_DATA_PATH = DATA_DIR / "acs-population" / "combined_population_data.csv"
 WEATHER_DATA_PATH = DATA_DIR / "noaa-nclimgrid-daily" / "nyc_fips_weather_data.csv"
@@ -127,4 +128,4 @@ CATEGORICAL_COLUMNS = [
     'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family', 'covid_flag'
 ]
 
-MODEL_TIMESTAMP = '20251006_015425'
+MODEL_TIMESTAMP = '20251006_154213'
