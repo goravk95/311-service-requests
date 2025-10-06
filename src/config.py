@@ -166,7 +166,7 @@ SCHEMA = pa.schema(
 # MODEL CONFIGURATION
 # =============================================================================
 
-MODEL_TIMESTAMP = '20251005_143331'
+MODEL_TIMESTAMP = '20251005_192302'
 
 # Feature columns for modeling
 NUMERICAL_COLUMNS = [
