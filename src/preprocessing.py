@@ -182,12 +182,12 @@ def filter_and_clean(df: pd.DataFrame) -> pd.DataFrame:
         ]
     )
 
-    df = df[df["resolution_outcome"] != "duplicate_of_previous"]
+    # df = df[df["resolution_outcome"] != "duplicate_of_previous"]
 
     # df = df[df['complaint_family'].isin(config.COMPLAINT_FAMILIES)]
 
     df = df[df["is_closed_before_created"] == False]
-    df = df[df["is_identical_created_closed"] == False]
+    # df = df[df["is_identical_created_closed"] == False]
 
     df = df[df['day'] >= date(2010, 1, 1)]
 
