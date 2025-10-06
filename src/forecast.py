@@ -887,7 +887,7 @@ def evaluate_models(bundle: Dict, model_type: Optional[str] = None, n_bins: int 
         axes[1].grid(True, alpha=0.3)
 
         # 3. Residuals vs Fitted Values
-        axes[2].scatter(y_pred_test, residuals, alpha=0.3, s=10)
+        axes[2].scatter(y_pred_test, residuals, alpha=0.1, s=1)
         axes[2].axhline(0, color="red", linestyle="--", linewidth=2)
         axes[2].set_xlabel("Fitted Values")
         axes[2].set_ylabel("Residuals")
