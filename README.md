@@ -1,24 +1,27 @@
 # NYC 311 Service Requests: DOHMH Ticket Forecasting
 
 ## Background
+The problem this repo aims to solve is: how can we help Agency X allocate its resources?
+- How should the FDNY allocate firefighters?
+- How should the NYPD allocate policemen?
 
-This repository aims to provide tools to the NYC Department of Health and Mental Hygiene (DOHMH) that aid them in:
+This repository aims to provide tools to the **NYC Department of Health and Mental Hygiene (DOHMH)** that aid them in:
 - Identifying problematic areas of NYC where they frequently receive tickets
 - Forecasting future (1-week ahead) ticket flow
 - Comparing predicted patterns with historical data
 
 DOHMH was selected for several reasons:
 
-- **Interesting problem domain:** The DOHMH dataset contains compelling issues such as rodent complaints and food safety inspections
-- **Manageable data size:** With approximately 1M records, it's large enough to be meaningful but digestible enough to work with efficiently without requiring big data infrastructure
+- **Interesting problem domain:** The DOHMH dataset contains compelling issues such as rodent complaints and food safety inspections.
+- **Manageable data size:** With approximately 1M records, it's large enough to be meaningful but digestible enough to work with efficiently without requiring big data infrastructure.
 
 ## Technical Problem Statement
 
-**Core question:** How many tickets will be opened by next week?
+**Core question:** How many tickets will be opened in the next week?
 
 ## Technical Deliverables
 
-1. **Predictive Models** - Machine learning models to forecast ticket volume and characteristics
+1. **Predictive Models** - Machine learning models to forecast ticket volume
 2. **Interactive Dashboard** - Visualization tool to explore predictions and run historical scenario analyses
 
 ## Getting Started
@@ -63,7 +66,7 @@ Then, proceed through the numbered notebooks in order to understand the developm
 - **Step 5a - Tuning:** Hyperparameter optimization
 - **Step 5b - Modeling:** Final model training and evaluation
 
-Each notebook documents the intermediate steps and decision-making process throughout the project.
+> Each notebook documents the intermediate steps and decision-making process throughout the project. The core feature engineering and modeling decision are made in Steps 4, 5a and 5b.
 
 ## Project Structure
 
