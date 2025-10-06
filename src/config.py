@@ -166,8 +166,6 @@ SCHEMA = pa.schema(
 # MODEL CONFIGURATION
 # =============================================================================
 
-MODEL_TIMESTAMP = '20251005_192302'
-
 # Feature columns for modeling
 NUMERICAL_COLUMNS = [
     'lag1', 'lag4', 'roll4', 'roll12',
@@ -177,5 +175,7 @@ NUMERICAL_COLUMNS = [
 ]
 
 CATEGORICAL_COLUMNS = [
-    'week_of_year', 'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family'
+    'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family', 'covid_flag'
 ]
+
+MODEL_TIMESTAMP = '20251005_192302'

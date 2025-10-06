@@ -436,24 +436,10 @@ def add_weather_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     result = df.copy()
 
-    # Heating and cooling degree days
-    if "tavg" in result.columns:
-        result["heating_degree"] = np.maximum(0, 65 - result["tavg"].fillna(65))
-        result["cooling_degree"] = np.maximum(0, result["tavg"].fillna(65) - 65)
-    else:
-        result["heating_degree"] = 0
-        result["cooling_degree"] = 0
-
-    # Temperature extremes
-    if "tmax" in result.columns:
-        result["heat_flag"] = (result["tmax"].fillna(0) >= 90).astype(int)
-    else:
-        result["heat_flag"] = 0
-
-    if "tmin" in result.columns:
-        result["freeze_flag"] = (result["tmin"].fillna(40) <= 32).astype(int)
-    else:
-        result["freeze_flag"] = 0
+    result["heating_degree"] = np.maximum(0, 65 - result["tavg"].fillna(65))
+    result["cooling_degree"] = np.maximum(0, result["tavg"].fillna(65) - 65)
+    result["heat_flag"] = (result["tmax"].fillna(0) >= 90).astype(int)
+    result["freeze_flag"] = (result["tmin"].fillna(40) <= 32).astype(int)
 
     # Rolling precipitation (only if fips and prcp exist)
     if "fips" in result.columns and "prcp" in result.columns:
