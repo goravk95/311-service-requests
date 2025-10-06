@@ -1,3 +1,8 @@
+"""Model training pipeline for NYC 311 service requests.
+
+This module orchestrates the end-to-end training pipeline including data fetching,
+preprocessing, feature engineering, and model training for multiple quantile forecasts.
+"""
 
 from datetime import datetime
 from . import fetch
@@ -6,7 +11,15 @@ from . import features
 from . import forecast
 from . import config
 
-def train_models(run_fetch = False, save_data = False, save_models = False):
+
+def train_models(run_fetch: bool = False, save_data: bool = False, save_models: bool = False) -> None:
+    """Train forecast models for NYC 311 service requests.
+
+    Args:
+        run_fetch: Whether to fetch fresh data from external sources.
+        save_data: Whether to save preprocessed data.
+        save_models: Whether to save trained models.
+    """
     if run_fetch:
         fetch.fetch_all_service_requests(save = save_data)
         df_pop = fetch.fetch_acs_census_population_data(start_year=2013, end_year=2023, save=save_data)

@@ -1,5 +1,4 @@
-"""
-Data Preprocessing Module for NYC 311 Service Requests (DOHMH)
+"""Data Preprocessing Module for NYC 311 Service Requests (DOHMH).
 
 This module contains functions for cleaning and preprocessing NYC 311 service request data,
 including deduplication, feature engineering, freetext mapping, and external data merging.
@@ -10,7 +9,6 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
-from typing import Optional
 
 from . import config
 
@@ -94,7 +92,7 @@ def create_date_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def map_freetext_columns(df: pd.DataFrame, mappings_path: Optional[str] = None) -> pd.DataFrame:
+def map_freetext_columns(df: pd.DataFrame, mappings_path: str | None = None) -> pd.DataFrame:
     """
     Map freetext columns to standardized categories using Excel mappings.
 
@@ -523,7 +521,7 @@ def merge_weather_data(df: pd.DataFrame, weather_data_path: str) -> pd.DataFrame
     return df_merged
 
 
-def preprocess_dohmh_data(df: pd.DataFrame, mappings_path: Optional[str] = None) -> pd.DataFrame:
+def preprocess_dohmh_data(df: pd.DataFrame, mappings_path: str | None = None) -> pd.DataFrame:
     """
     Main preprocessing pipeline for DOHMH service request data.
 

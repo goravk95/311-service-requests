@@ -1,45 +1,43 @@
-"""
-Forecast Model: Multi-horizon time-series prediction using LightGBM with Poisson objective.
-Trains separate models per horizon (1-4 weeks).
+"""Forecast Model: Multi-horizon time-series prediction using LightGBM.
+
+This module implements multi-horizon forecasting models with both mean (Poisson) and
+quantile regression objectives. Includes model training, hyperparameter tuning, evaluation,
+and persistence utilities.
 """
 
 import json
-import os
 import cloudpickle
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
-import joblib
-from pathlib import Path
-import optuna
-from optuna.samplers import TPESampler
-from typing import Dict, Optional
 import warnings
+from pathlib import Path
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
+from typing import Dict, Optional
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import cross_val_score, BaseCrossValidator
 from lightgbm import LGBMRegressor
 from scipy import stats
+import optuna
+from optuna.samplers import TPESampler
 
 from . import config
 
 warnings.filterwarnings("ignore")
 
 
-def shift_by_date(group, target_col, time_delta):
-    """
-    Shift y backward by horizon weeks (look forward in time)
+def shift_by_date(group: pd.DataFrame, target_col: str, time_delta: pd.Timedelta) -> pd.DataFrame:
+    """Shift target variable backward by specified time delta.
 
     Args:
-        group: DataFrame with columns [hex, complaint_family, week, y]
-        target_col: Target column name
-        time_delta: Time delta (in weeks)
+        group: DataFrame with time series data.
+        target_col: Target column name.
+        time_delta: Time delta to shift.
 
     Returns:
-        DataFrame with added target column
+        DataFrame with shifted target column added.
     """
     group = group.set_index("week").sort_index()
     shifted = group["y"].shift(freq=-time_delta)
@@ -48,19 +46,19 @@ def shift_by_date(group, target_col, time_delta):
 
 
 def create_horizon_targets(
-    panel: pd.DataFrame, horizons: List[int] = [1]
+    panel: pd.DataFrame, horizons: list[int] | None = None
 ) -> pd.DataFrame:
-    """
-    Create per-horizon target variables y_h1, y_h2, y_h3, y_h4.
-    Uses sparse construction (only for weeks that exist in panel).
+    """Create per-horizon target variables.
 
     Args:
-        panel: DataFrame with columns [hex, complaint_family, week, y]
-        horizons: List of forecast horizons in weeks
+        panel: DataFrame with time series panel data.
+        horizons: List of forecast horizons in weeks.
 
     Returns:
-        DataFrame with added target columns y_h1, y_h2, ..., y_hN
+        DataFrame with added target columns for each horizon.
     """
+    if horizons is None:
+        horizons = [1]
     result = panel.copy()
     result = result.sort_values(["hex8", "complaint_family", "week"])
 
@@ -75,41 +73,50 @@ def create_horizon_targets(
     return result
 
 
-def select_features(X, feature_list):
-    """
-    Select columns from X based off of list
+def select_features(X: pd.DataFrame, feature_list: list[str]) -> pd.DataFrame:
+    """Select subset of columns from DataFrame.
 
-        Parameters:
-            X: DataFrame of features transformation
-            feature_list: list of features
-        Returns:
-            X: DataFrame of subsetted columns
+    Args:
+        X: DataFrame of features.
+        feature_list: List of features to select.
+
+    Returns:
+        DataFrame with selected columns.
     """
     X = X[feature_list].copy()
     return X
 
 
-def filter_data(X, y):
-    """
-    Filter X and y based on null values in X
+def filter_data(X: pd.DataFrame, y: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
+    """Filter X and y based on null values in X.
 
-        Parameters:
-            X: DataFrame of features
-            y: Series of target values
-        Returns:
-            X_transformed: subsetted DataFrame
-            y_transformed: subsetted Series
+    Args:
+        X: DataFrame of features.
+        y: Series of target values.
+
+    Returns:
+        Tuple of filtered (X, y).
     """
     nan_mask = pd.isnull(X).any(axis=1)
     X_transformed = X[~nan_mask]
-    y_transformed = y[~nan_mask]  # Use .loc with actual indices
+    y_transformed = y[~nan_mask]
     print("X shape post-filtering:", X_transformed.shape)
     return X_transformed, y_transformed
 
 
-def split_train_test_by_cutoff(X, y, date_column="day", cutoff="2024-01-01"):
-    """Split X and y by a date cutoff where test >= cutoff.
-    Returns X_train, X_test, y_train, y_test
+def split_train_test_by_cutoff(
+    X: pd.DataFrame, y: pd.Series, date_column: str = "day", cutoff: str = "2024-01-01"
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Split X and y by a date cutoff.
+
+    Args:
+        X: Features DataFrame.
+        y: Target Series.
+        date_column: Name of date column.
+        cutoff: Date cutoff string.
+
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test).
     """
     cutoff = pd.Timestamp(cutoff)
     mask_test = pd.to_datetime(X[date_column]) >= cutoff
@@ -119,20 +126,16 @@ def split_train_test_by_cutoff(X, y, date_column="day", cutoff="2024-01-01"):
 
 
 class YearTimeSeriesSplit(BaseCrossValidator):
-    """
-    Time series splitter that splits data based on years.
+    """Time series splitter that splits data based on years.
     
-    Parameters
-    ----------
-    year_column : array-like
-        Array containing the year for each sample.
+    Args:
+        year_column: Array containing the year for each sample.
     """
     def __init__(self, year_column):
         self.year_column = np.array(year_column)
         self.unique_years = np.unique(self.year_column)
     
     def get_n_splits(self, X=None, y=None, groups=None):
-        # Number of splits is number of years minus 1
         return len(self.unique_years) - 1
     
     def split(self, X, y=None, groups=None):
@@ -253,22 +256,25 @@ def train_models(
     df: pd.DataFrame,
     numerical_columns: list[str],
     categorical_columns: list[str],
-    horizons: List[int] = [1],
+    horizons: list[int] | None = None,
     model_type: str = "mean",
     test_cutoff: str = "2024-01-01"
-) -> Dict:
-    """
-    Train multi-horizon forecast models for a single complaint family.
+) -> dict:
+    """Train multi-horizon forecast models.
 
     Args:
-        panel: DataFrame from build_forecast_panel with all families
-        horizons: List of forecast horizons (weeks)
-        feature_cols: Feature columns to use (auto-detected if None)
-        model_type: Type of model to train ('mean', '90', '50', '10')
+        df: DataFrame with forecast panel data.
+        numerical_columns: List of numerical feature columns.
+        categorical_columns: List of categorical feature columns.
+        horizons: List of forecast horizons (weeks).
+        model_type: Type of model ('mean', '90', '50', '10').
+        test_cutoff: Date cutoff for train/test split.
 
     Returns:
-        Bundle dict with 'family', 'feature_cols', 'cat_cols', 'models', 'metrics'
+        Dictionary with trained models, metrics, and metadata.
     """
+    if horizons is None:
+        horizons = [1]
     json_path = config.RESOURCES_DIR /  'model_optimal_params.json'
     with open(json_path, 'r') as f:
         optimal_params = json.load(f)
@@ -423,7 +429,6 @@ def predict_forecast(
 
     result = pd.concat(predictions, ignore_index=True)
     return result
-
 
 def save_bundle(bundle: Dict[str, Dict], timestamp: str, filename: str) -> None:
     """
