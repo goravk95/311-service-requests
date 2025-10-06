@@ -542,16 +542,20 @@ def tune(
 
     def objective(trial):
         params = {
-            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-            'num_leaves': trial.suggest_int('num_leaves', 50, 80),
-            'max_depth': trial.suggest_int('max_depth', 6, 8),
-            'min_child_samples': trial.suggest_int('min_child_samples', 20, 50),
-            'subsample': trial.suggest_float('subsample', 0.6, 0.9),
-            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
-            'n_estimators': 500,
-            'random_state': random_state,
-            'verbose': -1
-        }
+    'learning_rate': trial.suggest_float('learning_rate', 0.02, 0.12, log=True),
+    'num_leaves': trial.suggest_int('num_leaves', 48, 112),
+    'max_depth': trial.suggest_int('max_depth', 6, 9),
+    'min_child_samples': trial.suggest_int('min_child_samples', 24, 60),
+    'subsample': trial.suggest_float('subsample', 0.70, 0.95),
+    'subsample_freq': trial.suggest_int('subsample_freq', 1, 7),  # activates subsample
+    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.70, 0.95),
+    'lambda_l1': trial.suggest_float('lambda_l1', 0.0, 2.0),
+    'lambda_l2': trial.suggest_float('lambda_l2', 0.0, 3.0),
+    'min_split_gain': trial.suggest_float('min_split_gain', 0.0, 0.5),
+    'n_estimators': trial.suggest_int('n_estimators', 350, 900),
+    'random_state': random_state,
+    'verbose': -1,
+}
         
         # Set objective based on alpha
         if alpha is not None:
