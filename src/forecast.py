@@ -4,13 +4,13 @@ Trains separate models per horizon (1-4 weeks).
 """
 
 import json
+import os
 import cloudpickle
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
 import joblib
 from pathlib import Path
-
 import optuna
 from optuna.samplers import TPESampler
 from typing import Dict, Optional
@@ -20,7 +20,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score, BaseCrossValidator
+from sklearn.model_selection import cross_val_score, BaseCrossValidator
 from lightgbm import LGBMRegressor
 from scipy import stats
 
@@ -254,8 +254,8 @@ def train_models(
     numerical_columns: list[str],
     categorical_columns: list[str],
     horizons: List[int] = [1],
-    params: Optional[Dict] = None,
-    test_cutoff: str = "2025-01-01"
+    model_type: str = "mean",
+    test_cutoff: str = "2024-01-01"
 ) -> Dict:
     """
     Train multi-horizon forecast models for a single complaint family.
@@ -264,26 +264,38 @@ def train_models(
         panel: DataFrame from build_forecast_panel with all families
         horizons: List of forecast horizons (weeks)
         feature_cols: Feature columns to use (auto-detected if None)
-        params: LightGBM parameters (uses defaults if None)
+        model_type: Type of model to train ('mean', '90', '50', '10')
 
     Returns:
         Bundle dict with 'family', 'feature_cols', 'cat_cols', 'models', 'metrics'
     """
+    json_path = config.RESOURCES_DIR /  'model_optimal_params.json'
+    with open(json_path, 'r') as f:
+        optimal_params = json.load(f)
+    
+    if model_type not in optimal_params:
+        raise ValueError(f"model_type must be one of {list(optimal_params.keys())}, got {model_type}")
+    
+    # Get the optimal params for this model type
+    tuned_params = optimal_params[model_type]
+    
+    # Set up base parameters
+    params = {
+        "n_estimators": 800,
+        "random_state": 42,
+        "verbose": -1,
+        **tuned_params  # Add the tuned hyperparameters
+    }
+    
+    # Set objective based on model type
+    if model_type == "mean":
+        params["objective"] = "poisson"
+    else:
+        params["objective"] = "quantile"
+        params["alpha"] = float(model_type) / 100  # Convert '90' to 0.9, etc.
+    
     df = create_horizon_targets(df, horizons)
     input_columns = df.columns.tolist()
-    if params is None:
-        params = {
-            "objective": "poisson",
-            "n_estimators": 800,
-            "learning_rate": 0.05,
-            "max_depth": 6,
-            "num_leaves": 31,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "min_child_samples": 20,
-            "random_state": 42,
-            "verbose": -1,
-        }
 
     regressor = LGBMRegressor(**params)
     models = {}

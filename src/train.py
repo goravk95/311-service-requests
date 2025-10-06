@@ -4,6 +4,7 @@ from . import fetch
 from . import preprocessing
 from . import features
 from . import forecast
+from . import config
 
 def train_models(run_fetch = False, save_data = False, save_models = False):
     if run_fetch:
@@ -19,103 +20,38 @@ def train_models(run_fetch = False, save_data = False, save_models = False):
     if save_data:
         features.save_forecast_panel_data(forecast_panel)
 
-
-    numerical_columns = [
-            'lag1', 'lag4', 'roll4', 'roll12',
-            'momentum', 'weeks_since_last',
-            'tavg', 'prcp', 'heating_degree', 'cooling_degree',
-            'rain_3d', 'rain_7d', 'log_pop', 'nbr_roll4', 'nbr_roll12'
-        ]
-
-    categorical_columns = ['week_of_year', 'month', 'heat_flag', 'freeze_flag', 'hex6', 'complaint_family']
     horizons = [1]
-
-    poisson_params = {
-                'objective': 'poisson',
-                'n_estimators': 800,
-                'learning_rate': 0.05,
-                'max_depth': 6,
-                'num_leaves': 31,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'min_child_samples': 20,
-                'random_state': 42,
-                'verbose': -1
-            }
 
     bundle_mean = forecast.train_models(
         forecast_panel,
-        numerical_columns,
-        categorical_columns,
+        config.NUMERICAL_COLUMNS,
+        config.CATEGORICAL_COLUMNS,
         horizons,
-        poisson_params
+        model_type='mean'
     )
-
-    poisson_params = {
-                'objective': 'quantile',
-                'alpha': 0.9,
-                'n_estimators': 800,
-                'learning_rate': 0.05,
-                'max_depth': 6,
-                'num_leaves': 31,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'min_child_samples': 20,
-                'random_state': 42,
-                'verbose': -1
-            }
 
     bundle_90 = forecast.train_models(
         forecast_panel,
-        numerical_columns,
-        categorical_columns,
+        config.NUMERICAL_COLUMNS,
+        config.CATEGORICAL_COLUMNS,
         horizons,
-        poisson_params
+        model_type='90'
     )
-
-    poisson_params = {
-                'objective': 'quantile',
-                'alpha': 0.5,
-                'n_estimators': 800,
-                'learning_rate': 0.05,
-                'max_depth': 6,
-                'num_leaves': 31,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'min_child_samples': 20,
-                'random_state': 42,
-                'verbose': -1
-            }
 
     bundle_50 = forecast.train_models(
         forecast_panel,
-        numerical_columns,
-        categorical_columns,
+        config.NUMERICAL_COLUMNS,
+        config.CATEGORICAL_COLUMNS,
         horizons,
-        poisson_params
+        model_type='50'
     )
-
-
-    poisson_params = {
-                'objective': 'quantile',
-                'alpha': 0.1,
-                'n_estimators': 800,
-                'learning_rate': 0.05,
-                'max_depth': 6,
-                'num_leaves': 31,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'min_child_samples': 20,
-                'random_state': 42,
-                'verbose': -1
-            }
 
     bundle_10 = forecast.train_models(
         forecast_panel,
-        numerical_columns,
-        categorical_columns,
+        config.NUMERICAL_COLUMNS,
+        config.CATEGORICAL_COLUMNS,
         horizons,
-        poisson_params
+        model_type='10'
     )
 
 
@@ -127,4 +63,4 @@ def train_models(run_fetch = False, save_data = False, save_models = False):
         forecast.save_bundle(bundle_10,  timestamp, 'lgb_10.pkl')
 
 if __name__ == "__main__":
-    train_model(run_fetch = False, save_data = False, save_models = True)
+    train_models(run_fetch = False, save_data = False, save_models = True)
