@@ -88,7 +88,7 @@ nyc-311-service-requests/
 ## References
 
 - [NOAA NCLIMGRID Daily Climate Data](https://noaa-nclimgrid-daily-pds.s3.amazonaws.com/index.html#EpiNOAA/v1-0-0/parquet/cty/YEAR=2025/STATUS=scaled/) - Weather data source
-- [Research Paper on Climate and Disease Prediction](https://arxiv.org/pdf/2502.08649) - Literature Review
+- [Research Paper on Data Quality of 311 Service Requests](https://arxiv.org/pdf/2502.08649) - Literature Review
 
 ## Disclaimer
 
